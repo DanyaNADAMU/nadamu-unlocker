@@ -1,0 +1,30 @@
+#!/bin/sh
+# Interactive unlock CLI script for manual SSH sessions
+
+# Quiet Plymouth if running
+if command -v plymouth >/dev/null 2>&1; then
+    plymouth quit 2>/dev/null || true
+fi
+
+# Disable echo for secure password entry
+stty -echo
+printf "Enter LUKS Password: "
+read -r PASS
+stty echo
+printf "\n"
+
+# Locate passfifo pipe
+FIFO=""
+if [ -p /lib/cryptsetup/passfifo ]; then
+    FIFO="/lib/cryptsetup/passfifo"
+elif [ -p /run/cryptsetup/passfifo ]; then
+    FIFO="/run/cryptsetup/passfifo"
+fi
+
+if [ -n "$FIFO" ]; then
+    printf "%s" "$PASS" > "$FIFO"
+    echo "[NADAMU] Unlock payload delivered to $FIFO."
+else
+    echo "[-] Error: cryptsetup passfifo not found!"
+    exit 1
+fi

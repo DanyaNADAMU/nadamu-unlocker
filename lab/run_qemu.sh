@@ -1,0 +1,35 @@
+#!/bin/sh
+set -e
+
+DISK_IMG="/lab/test_disk.img"
+INITRD_IMG="/lab/test_initrd.img"
+KERNEL=$(ls -t /boot/vmlinuz-* 2>/dev/null | head -n 1)
+
+if [ -z "$KERNEL" ] || [ ! -f "$KERNEL" ]; then
+    echo "[-] Kernel not found in /boot/vmlinuz-*"
+    exit 1
+fi
+
+echo "[*] Using kernel: $KERNEL"
+
+# Check KVM availability
+KVM_FLAG="-machine q35,accel=tcg"
+if [ -c /dev/kvm ]; then
+    echo "[+] /dev/kvm detected, using hardware acceleration (KVM)"
+    KVM_FLAG="-enable-kvm -cpu host"
+else
+    echo "[!] /dev/kvm not found, falling back to TCG software emulation"
+fi
+
+echo "[*] Launching QEMU VM..."
+exec qemu-system-x86_64 \
+    $KVM_FLAG \
+    -m 512M \
+    -smp 1 \
+    -nographic \
+    -kernel "$KERNEL" \
+    -initrd "$INITRD_IMG" \
+    -drive file="$DISK_IMG",format=raw,if=virtio \
+    -netdev user,id=net0,hostfwd=tcp::2222-:22 \
+    -device virtio-net-pci,netdev=net0 \
+    -append "console=ttyS0 quiet"
