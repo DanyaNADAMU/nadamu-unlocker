@@ -3,179 +3,100 @@ set -e
 
 DATA_DIR="/lab/data"
 KEYS_DIR="${DATA_DIR}/keys"
-LUKS_PASS="${LUKS_PASSWORD:-password}"
-DISK_IMG="${DATA_DIR}/test_disk.img"
-INITRD_IMG="${DATA_DIR}/test_initrd.img"
-VMLINUZ="${DATA_DIR}/vmlinuz"
+LUKS_PASSWORD="${LUKS_PASSWORD:-password}"
 
 mkdir -p "${DATA_DIR}" "${KEYS_DIR}"
 
-echo "[*] 1. Generating test SSH keys..."
+echo "=== [NADAMU LAB INITIALIZATION (KALI STANDARD UPDATE-INITRAMFS)] ==="
+
+# 1. Generate SSH key pair for test client if missing
 if [ ! -f "${KEYS_DIR}/id_ed25519" ]; then
-    ssh-keygen -t ed25519 -N "" -C "nadamu-test-client" -f "${KEYS_DIR}/id_ed25519"
+    echo "[*] 1. Generating test SSH keys (ed25519)..."
+    ssh-keygen -t ed25519 -N "" -f "${KEYS_DIR}/id_ed25519" -C "nadamu-test-client"
 fi
 
-echo "[*] 2. Creating raw disk image (500MB sparse)..."
-if [ ! -f "${DISK_IMG}" ]; then
-    truncate -s 500M "${DISK_IMG}"
+PUBKEY_CONTENT=$(cat "${KEYS_DIR}/id_ed25519.pub")
+
+# 2. Create raw test disk image (500MB sparse) if missing
+if [ ! -f "${DATA_DIR}/test_disk.img" ]; then
+    echo "[*] 2. Creating raw disk image (500MB sparse)..."
+    truncate -s 500M "${DATA_DIR}/test_disk.img"
+
     echo "[*] 3. Formatting disk with LUKS2 (cryptsetup)..."
-    printf "%s" "${LUKS_PASS}" | cryptsetup luksFormat --type luks2 --batch-mode "${DISK_IMG}" -
+    printf "%s" "${LUKS_PASSWORD}" | cryptsetup luksFormat --type luks2 --pbkdf pbkdf2 --batch-mode "${DATA_DIR}/test_disk.img" -
 fi
 
-echo "[*] 4. Copying kernel binary..."
-KERNEL_BIN=$(ls -1 /boot/vmlinuz-* 2>/dev/null | sort -V | tail -n 1 || true)
-if [ -n "${KERNEL_BIN}" ] && [ -f "${KERNEL_BIN}" ]; then
-    cp -f "${KERNEL_BIN}" "${VMLINUZ}"
-else
-    echo "Warning: /boot/vmlinuz-* not found in container."
-fi
-
-echo "[*] 5. Building custom test initramfs..."
-WORK_INITRAMFS=$(mktemp -d /tmp/initramfs_build.XXXXXX)
-
-mkdir -p "${WORK_INITRAMFS}/bin"          "${WORK_INITRAMFS}/sbin"          "${WORK_INITRAMFS}/lib"          "${WORK_INITRAMFS}/lib64"          "${WORK_INITRAMFS}/lib/cryptsetup"          "${WORK_INITRAMFS}/etc/dropbear"          "${WORK_INITRAMFS}/dev"          "${WORK_INITRAMFS}/proc"          "${WORK_INITRAMFS}/sys"          "${WORK_INITRAMFS}/run"          "${WORK_INITRAMFS}/tmp"          "${WORK_INITRAMFS}/root"          "${WORK_INITRAMFS}/newroot"
-
-# Copy BusyBox and symlinks
-cp -f /bin/busybox "${WORK_INITRAMFS}/bin/busybox"
-chroot "${WORK_INITRAMFS}" /bin/busybox --install -s /bin
-
-# Copy Dropbear & cryptsetup & mkfs.ext4 with shared libraries and NSS modules
-for bin_path in /usr/sbin/dropbear /usr/bin/dropbearkey /sbin/cryptsetup /usr/sbin/mkfs.ext4 /sbin/mkfs.ext4; do
-    if [ -f "${bin_path}" ]; then
-        dest_dir="${WORK_INITRAMFS}$(dirname "${bin_path}")"
-        mkdir -p "${dest_dir}"
-        cp -f "${bin_path}" "${dest_dir}/"
-        ldd "${bin_path}" | grep -o '/lib[^ ]*' | while read -r lib; do
-            if [ -f "${lib}" ]; then
-                lib_dest="${WORK_INITRAMFS}$(dirname "${lib}")"
-                mkdir -p "${lib_dest}"
-                cp -f -u "${lib}" "${lib_dest}/" 2>/dev/null || true
-            fi
-        done
-    fi
-done
-
-# Copy NSS libraries required for user lookup (libnss_files, libnss_compat)
-for nss_lib in /lib/x86_64-linux-gnu/libnss_files* /usr/lib/x86_64-linux-gnu/libnss_files* /lib/x86_64-linux-gnu/libnss_compat* /usr/lib/x86_64-linux-gnu/libnss_compat*; do
-    if [ -f "${nss_lib}" ]; then
-        nss_dest="${WORK_INITRAMFS}$(dirname "${nss_lib}")"
-        mkdir -p "${nss_dest}"
-        cp -f -u "${nss_lib}" "${nss_dest}/" 2>/dev/null || true
-    fi
-done
-
-# Copy SSH public key for Dropbear to both standard locations
-mkdir -p "${WORK_INITRAMFS}/root/.ssh" "${WORK_INITRAMFS}/etc/dropbear"
-cat "${KEYS_DIR}/id_ed25519.pub" > "${WORK_INITRAMFS}/etc/dropbear/authorized_keys"
-cat "${KEYS_DIR}/id_ed25519.pub" > "${WORK_INITRAMFS}/root/.ssh/authorized_keys"
-chmod 700 "${WORK_INITRAMFS}/root" "${WORK_INITRAMFS}/root/.ssh"
-chmod 600 "${WORK_INITRAMFS}/etc/dropbear/authorized_keys" "${WORK_INITRAMFS}/root/.ssh/authorized_keys"
-
-# Generate Dropbear host key inside initramfs
-mkdir -p "${WORK_INITRAMFS}/etc/dropbear"
-dropbearkey -t ed25519 -f "${WORK_INITRAMFS}/etc/dropbear/dropbear_ed25519_host_key" 2>/dev/null
-
-# Create /etc/passwd, group and nsswitch.conf
-cat << 'EOF' > "${WORK_INITRAMFS}/etc/passwd"
-root:x:0:0:root:/root:/bin/sh
-EOF
-cat << 'EOF' > "${WORK_INITRAMFS}/etc/group"
-root:x:0:
-EOF
-cat << 'EOF' > "${WORK_INITRAMFS}/etc/nsswitch.conf"
-passwd: files
-group: files
-shadow: files
-EOF
-
-# Ensure essential /dev nodes exist before devtmpfs mount
-mknod -m 666 "${WORK_INITRAMFS}/dev/null" c 1 3 2>/dev/null || true
-mknod -m 666 "${WORK_INITRAMFS}/dev/zero" c 1 5 2>/dev/null || true
-mknod -m 666 "${WORK_INITRAMFS}/dev/urandom" c 1 9 2>/dev/null || true
-mknod -m 666 "${WORK_INITRAMFS}/dev/tty" c 5 0 2>/dev/null || true
-mknod -m 666 "${WORK_INITRAMFS}/dev/ptmx" c 5 2 2>/dev/null || true
-
-# Create init script
-cat << 'EOF' > "${WORK_INITRAMFS}/init"
-#!/bin/sh
-export PATH=/bin:/sbin:/usr/bin:/usr/sbin
-
-# Mount virtual filesystems
-mount -t proc proc /proc
-mount -t sysfs sysfs /sys
-mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
-
-echo "=========================================="
-echo "    NADAMU TEST INITRAMFS LOADED         "
-echo "=========================================="
-
-# Create FIFO for LUKS password injection
-mkdir -p /lib/cryptsetup
-mkfifo /lib/cryptsetup/passfifo
-
-# Bring up loopback and network
-ifconfig lo 127.0.0.1 up
-ifconfig eth0 10.0.2.15 netmask 255.255.255.0 up 2>/dev/null || true
-route add default gw 10.0.2.2 2>/dev/null || true
-
-# Start Dropbear SSH Daemon (foreground or daemon mode)
-echo "[initramfs] Starting Dropbear on port 22..."
-/usr/sbin/dropbear -E -s -j -k -p 22 -r /etc/dropbear/dropbear_ed25519_host_key
-sleep 1
-
-# Signal that initramfs is ready for unlock
-echo "NADAMU_SSH_READY" > /dev/kmsg 2>/dev/null || true
-
-echo "[initramfs] Awaiting password in /lib/cryptsetup/passfifo..."
-
-# Loop until disk is unlocked
-UNLOCKED=0
-while [ ${UNLOCKED} -eq 0 ]; do
-    PASS=$(cat /lib/cryptsetup/passfifo)
-    echo "[initramfs] Password received from passfifo. Attempting cryptsetup open..."
-    if printf "%s" "${PASS}" | cryptsetup open --type luks /dev/vda test_crypt -; then
-        echo "[initramfs] LUKS unlock SUCCESSFUL!"
-        UNLOCKED=1
-    else
-        echo "[initramfs] cryptsetup unlock FAILED! Re-opening passfifo..."
-    fi
-done
-
-# Check if filesystem exists on unlocked mapper, format if needed
-echo "[initramfs] Checking root filesystem on /dev/mapper/test_crypt..."
-if ! blkid /dev/mapper/test_crypt | grep -q "ext4"; then
-    echo "[initramfs] First boot: Formatting /dev/mapper/test_crypt as ext4..."
-    mkfs.ext4 -F /dev/mapper/test_crypt
-fi
-
-# Mount rootfs and create success flag
-mount /dev/mapper/test_crypt /newroot
-echo "NADAMU_BOOT_SUCCESS_$(date +%s)" > /newroot/BOOT_SUCCESS.txt
-echo "[initramfs] Successfully mounted rootfs. BOOT_SUCCESS.txt written."
-
-# Stop dropbear
-killall dropbear 2>/dev/null || true
-
-echo "=========================================="
-echo "    NADAMU: BOOT CYCLE COMPLETE           "
-echo "=========================================="
-
-# Keep alive or clean exit
-sync
-poweroff -f
-EOF
-
-chmod +x "${WORK_INITRAMFS}/init"
-
-# Package initramfs
-if [ -x /bin/busybox ]; then
-    (cd "${WORK_INITRAMFS}" && find . -print0 | /bin/busybox cpio -H newc -o -0 | gzip -9 > "${INITRD_IMG}.tmp" && mv -f "${INITRD_IMG}.tmp" "${INITRD_IMG}")
-elif command -v cpio >/dev/null 2>&1; then
-    (cd "${WORK_INITRAMFS}" && find . -print0 | cpio --null --create --format=newc | gzip -9 > "${INITRD_IMG}.tmp" && mv -f "${INITRD_IMG}.tmp" "${INITRD_IMG}")
-else
-    echo "Error: neither cpio nor busybox cpio found!"
+# 3. Detect installed kernel version
+KERNEL_VER=$(ls -1 /lib/modules 2>/dev/null | tail -n 1)
+if [ -z "${KERNEL_VER}" ]; then
+    echo "[-] Error: No kernel modules found in /lib/modules"
     exit 1
 fi
-rm -rf "${WORK_INITRAMFS}"
+echo "[*] 4. Detected kernel version: ${KERNEL_VER}"
 
-echo "[*] 6. Lab assets built successfully in ${DATA_DIR}"
+# Copy vmlinuz to data
+cp -f "/boot/vmlinuz-${KERNEL_VER}" "${DATA_DIR}/vmlinuz"
+
+# 4. Configure standard Kali initramfs-tools & dropbear-initramfs
+echo "[*] 5. Configuring official dropbear-initramfs and hooks..."
+
+# Dropbear initramfs options (disable password auth, allow only key auth)
+mkdir -p /etc/dropbear/initramfs
+echo 'DROPBEAR_OPTIONS="-p 22 -s -j -k -s -w"' > /etc/dropbear/initramfs/dropbear.conf
+echo "${PUBKEY_CONTENT}" > /etc/dropbear/initramfs/authorized_keys
+chmod 600 /etc/dropbear/initramfs/authorized_keys
+
+# Make sure MODULES=most so QEMU virtio/net/blk drivers are included
+sed -i 's/^MODULES=.*/MODULES=most/' /etc/initramfs-tools/initramfs.conf 2>/dev/null || true
+
+# Add required kernel modules for QEMU and crypto
+cat << 'EOF' > /etc/initramfs-tools/modules
+virtio_pci
+virtio_net
+virtio_blk
+dm_mod
+dm_crypt
+aes
+xts
+sha256
+sha512
+EOF
+
+# Install our custom unlock helper & passfifo script into initramfs hooks
+mkdir -p /etc/initramfs-tools/hooks /etc/initramfs-tools/scripts/init-premount
+
+# Hook to copy /bin/unlock helper and setup passfifo support
+cat << 'EOF' > /etc/initramfs-tools/hooks/nadamu_unlock
+#!/bin/sh
+set -e
+
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0;; esac
+
+. /usr/share/initramfs-tools/hook-functions
+
+mkdir -p "${DESTDIR}/lib/cryptsetup"
+[ -p "${DESTDIR}/lib/cryptsetup/passfifo" ] || mkfifo "${DESTDIR}/lib/cryptsetup/passfifo"
+chmod 600 "${DESTDIR}/lib/cryptsetup/passfifo"
+
+# Copy /bin/unlock
+if [ -f /lab/laptop/bin/unlock ]; then
+    copy_exec /lab/laptop/bin/unlock /bin/unlock
+fi
+
+# Ensure cryptsetup binaries and libs are present
+copy_exec /sbin/cryptsetup /sbin/cryptsetup
+exit 0
+EOF
+chmod +x /etc/initramfs-tools/hooks/nadamu_unlock
+
+# Build standard Kali initramfs using update-initramfs
+echo "[*] 6. Building official Kali initramfs image via update-initramfs..."
+update-initramfs -c -k "${KERNEL_VER}"
+
+# Copy the generated initramfs to data directory
+cp -f "/boot/initrd.img-${KERNEL_VER}" "${DATA_DIR}/test_initrd.img"
+
+echo "[*] 7. Lab assets built successfully in ${DATA_DIR}"
+ls -lh "${DATA_DIR}"
