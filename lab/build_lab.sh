@@ -39,7 +39,7 @@ mkdir -p "${WORK_INITRAMFS}/bin"          "${WORK_INITRAMFS}/sbin"          "${W
 cp -f /bin/busybox "${WORK_INITRAMFS}/bin/busybox"
 chroot "${WORK_INITRAMFS}" /bin/busybox --install -s /bin
 
-# Copy Dropbear & cryptsetup & mkfs.ext4 with shared libraries
+# Copy Dropbear & cryptsetup & mkfs.ext4 with shared libraries and NSS modules
 for bin_path in /usr/sbin/dropbear /usr/bin/dropbearkey /sbin/cryptsetup /usr/sbin/mkfs.ext4 /sbin/mkfs.ext4; do
     if [ -f "${bin_path}" ]; then
         dest_dir="${WORK_INITRAMFS}$(dirname "${bin_path}")"
@@ -55,20 +55,45 @@ for bin_path in /usr/sbin/dropbear /usr/bin/dropbearkey /sbin/cryptsetup /usr/sb
     fi
 done
 
-# Copy SSH public key for Dropbear
+# Copy NSS libraries required for user lookup (libnss_files, libnss_compat)
+for nss_lib in /lib/x86_64-linux-gnu/libnss_files* /usr/lib/x86_64-linux-gnu/libnss_files* /lib/x86_64-linux-gnu/libnss_compat* /usr/lib/x86_64-linux-gnu/libnss_compat*; do
+    if [ -f "${nss_lib}" ]; then
+        nss_dest="${WORK_INITRAMFS}$(dirname "${nss_lib}")"
+        mkdir -p "${nss_dest}"
+        cp -f -u "${nss_lib}" "${nss_dest}/" 2>/dev/null || true
+    fi
+done
+
+# Copy SSH public key for Dropbear to both standard locations
+mkdir -p "${WORK_INITRAMFS}/root/.ssh" "${WORK_INITRAMFS}/etc/dropbear"
 cat "${KEYS_DIR}/id_ed25519.pub" > "${WORK_INITRAMFS}/etc/dropbear/authorized_keys"
-chmod 600 "${WORK_INITRAMFS}/etc/dropbear/authorized_keys"
+cat "${KEYS_DIR}/id_ed25519.pub" > "${WORK_INITRAMFS}/root/.ssh/authorized_keys"
+chmod 700 "${WORK_INITRAMFS}/root" "${WORK_INITRAMFS}/root/.ssh"
+chmod 600 "${WORK_INITRAMFS}/etc/dropbear/authorized_keys" "${WORK_INITRAMFS}/root/.ssh/authorized_keys"
 
 # Generate Dropbear host key inside initramfs
+mkdir -p "${WORK_INITRAMFS}/etc/dropbear"
 dropbearkey -t ed25519 -f "${WORK_INITRAMFS}/etc/dropbear/dropbear_ed25519_host_key" 2>/dev/null
 
-# Create /etc/passwd and group
+# Create /etc/passwd, group and nsswitch.conf
 cat << 'EOF' > "${WORK_INITRAMFS}/etc/passwd"
 root:x:0:0:root:/root:/bin/sh
 EOF
 cat << 'EOF' > "${WORK_INITRAMFS}/etc/group"
 root:x:0:
 EOF
+cat << 'EOF' > "${WORK_INITRAMFS}/etc/nsswitch.conf"
+passwd: files
+group: files
+shadow: files
+EOF
+
+# Ensure essential /dev nodes exist before devtmpfs mount
+mknod -m 666 "${WORK_INITRAMFS}/dev/null" c 1 3 2>/dev/null || true
+mknod -m 666 "${WORK_INITRAMFS}/dev/zero" c 1 5 2>/dev/null || true
+mknod -m 666 "${WORK_INITRAMFS}/dev/urandom" c 1 9 2>/dev/null || true
+mknod -m 666 "${WORK_INITRAMFS}/dev/tty" c 5 0 2>/dev/null || true
+mknod -m 666 "${WORK_INITRAMFS}/dev/ptmx" c 5 2 2>/dev/null || true
 
 # Create init script
 cat << 'EOF' > "${WORK_INITRAMFS}/init"
@@ -93,9 +118,13 @@ ifconfig lo 127.0.0.1 up
 ifconfig eth0 10.0.2.15 netmask 255.255.255.0 up 2>/dev/null || true
 route add default gw 10.0.2.2 2>/dev/null || true
 
-# Start Dropbear SSH Daemon
+# Start Dropbear SSH Daemon (foreground or daemon mode)
 echo "[initramfs] Starting Dropbear on port 22..."
 /usr/sbin/dropbear -E -s -j -k -p 22 -r /etc/dropbear/dropbear_ed25519_host_key
+sleep 1
+
+# Signal that initramfs is ready for unlock
+echo "NADAMU_SSH_READY" > /dev/kmsg 2>/dev/null || true
 
 echo "[initramfs] Awaiting password in /lib/cryptsetup/passfifo..."
 
@@ -139,10 +168,10 @@ EOF
 chmod +x "${WORK_INITRAMFS}/init"
 
 # Package initramfs
-if command -v cpio >/dev/null 2>&1; then
-    (cd "${WORK_INITRAMFS}" && find . -print0 | cpio --null --create --format=newc | gzip -9 > "${INITRD_IMG}")
-elif [ -x /bin/busybox ]; then
-    (cd "${WORK_INITRAMFS}" && find . -print0 | /bin/busybox cpio -H newc -o -0 | gzip -9 > "${INITRD_IMG}")
+if [ -x /bin/busybox ]; then
+    (cd "${WORK_INITRAMFS}" && find . -print0 | /bin/busybox cpio -H newc -o -0 | gzip -9 > "${INITRD_IMG}.tmp" && mv -f "${INITRD_IMG}.tmp" "${INITRD_IMG}")
+elif command -v cpio >/dev/null 2>&1; then
+    (cd "${WORK_INITRAMFS}" && find . -print0 | cpio --null --create --format=newc | gzip -9 > "${INITRD_IMG}.tmp" && mv -f "${INITRD_IMG}.tmp" "${INITRD_IMG}")
 else
     echo "Error: neither cpio nor busybox cpio found!"
     exit 1

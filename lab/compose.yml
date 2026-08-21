@@ -11,6 +11,7 @@ services:
       - agent_net
     volumes:
       - ./data:/lab/data
+      - .:/lab/scripts:ro
     deploy:
       resources:
         limits:
