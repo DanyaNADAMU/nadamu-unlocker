@@ -63,7 +63,7 @@ sha512
 EOF
 
 # Install our custom unlock helper & passfifo script into initramfs hooks
-mkdir -p /etc/initramfs-tools/hooks /etc/initramfs-tools/scripts/init-premount
+mkdir -p /etc/initramfs-tools/hooks /etc/initramfs-tools/scripts/local-top
 
 # Hook to copy /bin/unlock helper and setup passfifo support
 cat << 'EOF' > /etc/initramfs-tools/hooks/nadamu_unlock
@@ -91,9 +91,50 @@ exit 0
 EOF
 chmod +x /etc/initramfs-tools/hooks/nadamu_unlock
 
+# Script to unlock LUKS via passfifo during local-top
+cat << 'EOF' > /etc/initramfs-tools/scripts/local-top/nadamu_cryptroot
+#!/bin/sh
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0;; esac
+
+mkdir -p /lib/cryptsetup
+[ -p /lib/cryptsetup/passfifo ] || mkfifo /lib/cryptsetup/passfifo
+
+echo "=========================================="
+echo "    NADAMU LUKS UNLOCK READY"
+echo "=========================================="
+echo "[*] Waiting for passphrase on /lib/cryptsetup/passfifo..."
+
+# Read pass from FIFO and open cryptroot
+while [ ! -b /dev/mapper/test_crypt ]; do
+    if [ -p /lib/cryptsetup/passfifo ]; then
+        PASS=$(cat /lib/cryptsetup/passfifo 2>/dev/null)
+        if [ -n "$PASS" ]; then
+            echo "[*] Received passphrase, attempting cryptsetup open..."
+            printf "%s" "$PASS" | cryptsetup open --type luks /dev/vda test_crypt -
+            if [ -b /dev/mapper/test_crypt ]; then
+                echo "[+] LUKS device test_crypt opened successfully!"
+                # Format if new
+                if ! blkid /dev/mapper/test_crypt | grep -q ext4; then
+                    echo "[*] Formatting ext4 rootfs..."
+                    mke2fs -t ext4 -F /dev/mapper/test_crypt >/dev/null 2>&1
+                fi
+                break
+            else
+                echo "[-] Invalid passphrase, waiting again..."
+            fi
+        fi
+    fi
+    sleep 1
+done
+exit 0
+EOF
+chmod +x /etc/initramfs-tools/scripts/local-top/nadamu_cryptroot
+
 # Build standard Kali initramfs using update-initramfs
 echo "[*] 6. Building official Kali initramfs image via update-initramfs..."
-update-initramfs -c -k "${KERNEL_VER}"
+update-initramfs -u -k "${KERNEL_VER}" || update-initramfs -c -k "${KERNEL_VER}"
 
 # Copy the generated initramfs to data directory
 cp -f "/boot/initrd.img-${KERNEL_VER}" "${DATA_DIR}/test_initrd.img"
