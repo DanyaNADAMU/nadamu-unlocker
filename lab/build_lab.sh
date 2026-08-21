@@ -139,7 +139,14 @@ EOF
 chmod +x "${WORK_INITRAMFS}/init"
 
 # Package initramfs
-(cd "${WORK_INITRAMFS}" && find . -print0 | cpio --null --create --format=newc | gzip -9 > "${INITRD_IMG}")
+if command -v cpio >/dev/null 2>&1; then
+    (cd "${WORK_INITRAMFS}" && find . -print0 | cpio --null --create --format=newc | gzip -9 > "${INITRD_IMG}")
+elif [ -x /bin/busybox ]; then
+    (cd "${WORK_INITRAMFS}" && find . -print0 | /bin/busybox cpio -H newc -o -0 | gzip -9 > "${INITRD_IMG}")
+else
+    echo "Error: neither cpio nor busybox cpio found!"
+    exit 1
+fi
 rm -rf "${WORK_INITRAMFS}"
 
 echo "[*] 6. Lab assets built successfully in ${DATA_DIR}"

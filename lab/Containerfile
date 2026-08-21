@@ -1,8 +1,7 @@
-FROM docker.io/kalilinux/kali-rolling
+FROM docker.io/kalilinux/kali-rolling:latest
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install QEMU, kernel, cryptsetup, dropbear, and minimal build tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     qemu-system-x86 \
     qemu-utils \
@@ -14,18 +13,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     initramfs-tools \
     e2fsprogs \
     openssh-client \
-    iproute2 \
-    procps \
-    socat \
+    cpio \
+    curl \
     ca-certificates \
-    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /lab
 
 COPY . /lab/
 RUN chmod +x /lab/*.sh 2>/dev/null || true
-
-EXPOSE 2222
 
 ENTRYPOINT ["/lab/entrypoint.sh"]

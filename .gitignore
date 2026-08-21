@@ -15,6 +15,9 @@ test-lab/*.img
 test-lab/*.iso
 test-lab/vmlinuz*
 test-lab/initrd*
+lab/data/
+*.img
+*.iso
 
 # Secrets and Keys
 *.pem
