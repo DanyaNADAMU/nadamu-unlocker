@@ -11,6 +11,8 @@ services:
       - "127.0.0.1:10022:2222"
     networks:
       - agent_net
+    volumes:
+      - ./lab_data:/lab/data
     deploy:
       resources:
         limits:
