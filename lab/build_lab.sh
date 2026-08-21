@@ -41,10 +41,11 @@ cp -f "/boot/vmlinuz-${KERNEL_VER}" "${DATA_DIR}/vmlinuz"
 echo "[*] 5. Configuring official dropbear-initramfs and hooks..."
 
 # Dropbear initramfs options (disable password auth, allow only key auth)
-mkdir -p /etc/dropbear/initramfs
+mkdir -p /etc/dropbear/initramfs /root/.ssh
 echo 'DROPBEAR_OPTIONS="-p 22 -s -j -k -s -w"' > /etc/dropbear/initramfs/dropbear.conf
 echo "${PUBKEY_CONTENT}" > /etc/dropbear/initramfs/authorized_keys
-chmod 600 /etc/dropbear/initramfs/authorized_keys
+echo "${PUBKEY_CONTENT}" > /root/.ssh/authorized_keys
+chmod 600 /etc/dropbear/initramfs/authorized_keys /root/.ssh/authorized_keys 2>/dev/null || true
 
 # Make sure MODULES=most so QEMU virtio/net/blk drivers are included
 sed -i 's/^MODULES=.*/MODULES=most/' /etc/initramfs-tools/initramfs.conf 2>/dev/null || true
@@ -76,9 +77,15 @@ case "$1" in prereqs) prereqs; exit 0;; esac
 
 . /usr/share/initramfs-tools/hook-functions
 
-mkdir -p "${DESTDIR}/lib/cryptsetup"
+mkdir -p "${DESTDIR}/lib/cryptsetup" "${DESTDIR}/root/.ssh" "${DESTDIR}/etc/dropbear"
 [ -p "${DESTDIR}/lib/cryptsetup/passfifo" ] || mkfifo "${DESTDIR}/lib/cryptsetup/passfifo"
 chmod 600 "${DESTDIR}/lib/cryptsetup/passfifo"
+
+# Ensure authorized_keys are copied to all potential dropbear search paths
+if [ -f /etc/dropbear/initramfs/authorized_keys ]; then
+    cp -f /etc/dropbear/initramfs/authorized_keys "${DESTDIR}/root/.ssh/authorized_keys"
+    cp -f /etc/dropbear/initramfs/authorized_keys "${DESTDIR}/etc/dropbear/authorized_keys" 2>/dev/null || true
+fi
 
 # Copy /bin/unlock
 if [ -f /lab/laptop/bin/unlock ]; then
