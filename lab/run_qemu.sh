@@ -1,8 +1,8 @@
 #!/bin/sh
 set -e
 
-DISK_IMG="/lab/test_disk.img"
-INITRD_IMG="/lab/test_initrd.img"
+DISK_IMG="/lab/data/test_disk.img"
+INITRD_IMG="/lab/data/test_initrd.img"
 KERNEL=$(ls -t /boot/vmlinuz-* 2>/dev/null | head -n 1)
 
 if [ -z "$KERNEL" ] || [ ! -f "$KERNEL" ]; then

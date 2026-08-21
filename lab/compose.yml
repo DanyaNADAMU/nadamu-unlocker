@@ -1,25 +1,23 @@
 services:
-  nadamu-lab:
+  nadamu-unlocker-lab:
     build:
       context: .
       dockerfile: Containerfile
-    container_name: nadamu-lab
-    restart: unless-stopped
+    container_name: nadamu-unlocker-lab
+    restart: no
     devices:
       - /dev/kvm:/dev/kvm
-    ports:
-      - "127.0.0.1:10022:2222"
     networks:
       - agent_net
     volumes:
-      - ./lab_data:/lab/data
+      - ./data:/lab/data
     deploy:
       resources:
         limits:
           cpus: '1.0'
           memory: 1024M
     environment:
-      - LUKS_PASSWORD=nadamu-test-pass-1234
+      - LUKS_PASSWORD=password
 
 networks:
   agent_net:

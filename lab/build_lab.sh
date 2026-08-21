@@ -2,15 +2,15 @@
 set -e
 
 # Config
-PASS="${1:-nadamu-test-pass-1234}"
-DISK_IMG="/lab/test_disk.img"
+PASS="${1:-password}"
+DISK_IMG="/lab/data/test_disk.img"
 INITRD_DIR="/lab/initrd_build"
-INITRD_OUT="/lab/test_initrd.img"
+INITRD_OUT="/lab/data/test_initrd.img"
 
 echo "[*] 1. Generating test SSH keys..."
-mkdir -p /lab/keys
-if [ ! -f /lab/keys/id_ed25519 ]; then
-    ssh-keygen -t ed25519 -N "" -f /lab/keys/id_ed25519 -C "nadamu-test-client"
+mkdir -p /lab/data/keys
+if [ ! -f /lab/data/keys/id_ed25519 ]; then
+    ssh-keygen -t ed25519 -N "" -f /lab/data/keys/id_ed25519 -C "nadamu-test-client"
 fi
 
 echo "[*] 2. Creating raw disk image (500MB sparse)..."
@@ -88,8 +88,9 @@ fi
 
 # Authorized keys
 mkdir -p "$INITRD_DIR/root/.ssh"
-cat /lab/keys/id_ed25519.pub > "$INITRD_DIR/root/.ssh/authorized_keys"
-chmod 600 "$INITRD_DIR/root/.ssh/authorized_keys"
+cat /lab/data/keys/id_ed25519.pub > "$INITRD_DIR/etc/dropbear/authorized_keys"
+cat /lab/data/keys/id_ed25519.pub > "$INITRD_DIR/root/.ssh/authorized_keys"
+chmod 600 "$INITRD_DIR/root/.ssh/authorized_keys" "$INITRD_DIR/etc/dropbear/authorized_keys" 2>/dev/null || true
 
 # Copy custom unlock CLI wrapper
 cat << 'EOF' > "$INITRD_DIR/bin/unlock"
