@@ -1,180 +1,145 @@
 #!/bin/sh
 set -e
 
-# Config
-PASS="${1:-password}"
-DISK_IMG="/lab/data/test_disk.img"
-INITRD_DIR="/lab/initrd_build"
-INITRD_OUT="/lab/data/test_initrd.img"
+DATA_DIR="/lab/data"
+KEYS_DIR="${DATA_DIR}/keys"
+LUKS_PASS="${LUKS_PASSWORD:-password}"
+DISK_IMG="${DATA_DIR}/test_disk.img"
+INITRD_IMG="${DATA_DIR}/test_initrd.img"
+VMLINUZ="${DATA_DIR}/vmlinuz"
+
+mkdir -p "${DATA_DIR}" "${KEYS_DIR}"
 
 echo "[*] 1. Generating test SSH keys..."
-mkdir -p /lab/data/keys
-if [ ! -f /lab/data/keys/id_ed25519 ]; then
-    ssh-keygen -t ed25519 -N "" -f /lab/data/keys/id_ed25519 -C "nadamu-test-client"
+if [ ! -f "${KEYS_DIR}/id_ed25519" ]; then
+    ssh-keygen -t ed25519 -N "" -C "nadamu-test-client" -f "${KEYS_DIR}/id_ed25519"
 fi
 
 echo "[*] 2. Creating raw disk image (500MB sparse)..."
-rm -f "$DISK_IMG"
-truncate -s 500M "$DISK_IMG"
-
-echo "[*] 3. Formatting disk with LUKS2 (cryptsetup)..."
-# Use PBKDF Argon2id with lower memory limit for fast lab testing
-printf "%s" "$PASS" | cryptsetup luksFormat --type luks2 --pbkdf argon2id --pbkdf-memory 65536 --pbkdf-force-iterations 4 --batch-mode "$DISK_IMG"
-
-echo "[*] 4. Opening LUKS device and creating ext4 rootfs..."
-MAPPER_NAME="test_crypt_builder"
-printf "%s" "$PASS" | cryptsetup open "$DISK_IMG" "$MAPPER_NAME"
-
-mkfs.ext4 -L rootfs "/dev/mapper/$MAPPER_NAME"
-mkdir -p /mnt/test_root
-mount "/dev/mapper/$MAPPER_NAME" /mnt/test_root
-
-# Minimal rootfs marker
-mkdir -p /mnt/test_root/etc /mnt/test_root/bin /mnt/test_root/sbin /mnt/test_root/dev /mnt/test_root/proc /mnt/test_root/sys
-echo "SUCCESS_UNLOCKED_NADAMU" > /mnt/test_root/etc/BOOT_SUCCESS
-
-# Simple init script inside rootfs to confirm boot completion
-cat << 'EOF' > /mnt/test_root/sbin/init
-#!/bin/sh
-mount -t proc proc /proc
-mount -t sysfs sysfs /sys
-mount -t devtmpfs devtmpfs /dev
-echo ""
-echo "=========================================="
-echo " [NADAMU] BOOT SUCCESSFUL! ROOTFS MOUNTED!"
-echo " Flag: $(cat /etc/BOOT_SUCCESS)"
-echo "=========================================="
-echo ""
-while true; do sleep 3600; done
-EOF
-chmod +x /mnt/test_root/sbin/init
-
-umount /mnt/test_root
-cryptsetup close "$MAPPER_NAME"
-echo "[+] LUKS disk image ready: $DISK_IMG"
-
-echo "[*] 5. Building test initramfs..."
-rm -rf "$INITRD_DIR"
-mkdir -p "$INITRD_DIR"/bin "$INITRD_DIR"/sbin "$INITRD_DIR"/etc "$INITRD_DIR"/proc "$INITRD_DIR"/sys "$INITRD_DIR"/dev "$INITRD_DIR"/run "$INITRD_DIR"/lib "$INITRD_DIR"/lib64 "$INITRD_DIR"/lib/cryptsetup "$INITRD_DIR"/etc/dropbear
-
-# Copy static busybox
-cp /bin/busybox "$INITRD_DIR"/bin/
-for applet in sh ash ls cat echo printf sleep mkdir mount umount mknod killall ps grep stty ping ip ifconfig udhcpc; do
-    ln -s busybox "$INITRD_DIR"/bin/$applet 2>/dev/null || true
-done
-
-# Copy cryptsetup, dropbear, and their shared library dependencies
-copy_with_libs() {
-    bin_path="$1"
-    [ ! -f "$bin_path" ] && return
-    cp "$bin_path" "$INITRD_DIR/bin/"
-    ldd "$bin_path" 2>/dev/null | grep -o '/[^ ]*' | while read -r lib; do
-        if [ -f "$lib" ]; then
-            target_dir="$INITRD_DIR$(dirname "$lib")"
-            mkdir -p "$target_dir"
-            cp -u "$lib" "$target_dir/" 2>/dev/null || true
-        fi
-    done
-}
-
-copy_with_libs "$(which cryptsetup)"
-copy_with_libs "$(which dropbear)"
-copy_with_libs "$(which dropbearkey)"
-
-# Generate host keys for dropbear
-if [ ! -f "$INITRD_DIR/etc/dropbear/dropbear_ed25519_host_key" ]; then
-    dropbearkey -t ed25519 -f "$INITRD_DIR/etc/dropbear/dropbear_ed25519_host_key"
+if [ ! -f "${DISK_IMG}" ]; then
+    truncate -s 500M "${DISK_IMG}"
+    echo "[*] 3. Formatting disk with LUKS2 (cryptsetup)..."
+    printf "%s" "${LUKS_PASS}" | cryptsetup luksFormat --type luks2 --batch-mode "${DISK_IMG}" -
 fi
 
-# Authorized keys
-mkdir -p "$INITRD_DIR/root/.ssh"
-cat /lab/data/keys/id_ed25519.pub > "$INITRD_DIR/etc/dropbear/authorized_keys"
-cat /lab/data/keys/id_ed25519.pub > "$INITRD_DIR/root/.ssh/authorized_keys"
-chmod 600 "$INITRD_DIR/root/.ssh/authorized_keys" "$INITRD_DIR/etc/dropbear/authorized_keys" 2>/dev/null || true
-
-# Copy custom unlock CLI wrapper
-cat << 'EOF' > "$INITRD_DIR/bin/unlock"
-#!/bin/sh
-stty -echo
-printf "Enter LUKS Password: "
-read -r PASS
-stty echo
-printf "\n"
-
-FIFO=""
-if [ -p /lib/cryptsetup/passfifo ]; then
-    FIFO="/lib/cryptsetup/passfifo"
-elif [ -p /run/cryptsetup/passfifo ]; then
-    FIFO="/run/cryptsetup/passfifo"
-fi
-
-if [ -n "$FIFO" ]; then
-    printf "%s" "$PASS" > "$FIFO"
-    echo "[NADAMU] Unlock payload sent to $FIFO"
+echo "[*] 4. Copying kernel binary..."
+KERNEL_BIN=$(ls -1 /boot/vmlinuz-* 2>/dev/null | sort -V | tail -n 1 || true)
+if [ -n "${KERNEL_BIN}" ] && [ -f "${KERNEL_BIN}" ]; then
+    cp -f "${KERNEL_BIN}" "${VMLINUZ}"
 else
-    echo "Error: passfifo not found"
+    echo "Warning: /boot/vmlinuz-* not found in container."
 fi
-EOF
-chmod +x "$INITRD_DIR/bin/unlock"
 
-# Custom init script for initramfs
-cat << 'EOF' > "$INITRD_DIR/init"
-#!/bin/sh
-mount -t proc proc /proc
-mount -t sysfs sysfs /sys
-mount -t devtmpfs devtmpfs /dev
-mkdir -p /dev/pts /dev/shm
-mount -t devpts devpts /dev/pts
+echo "[*] 5. Building custom test initramfs..."
+WORK_INITRAMFS=$(mktemp -d /tmp/initramfs_build.XXXXXX)
 
-echo "=========================================="
-echo " [NADAMU LAB] Starting Initramfs..."
-echo "=========================================="
+mkdir -p "${WORK_INITRAMFS}/bin"          "${WORK_INITRAMFS}/sbin"          "${WORK_INITRAMFS}/lib"          "${WORK_INITRAMFS}/lib64"          "${WORK_INITRAMFS}/lib/cryptsetup"          "${WORK_INITRAMFS}/etc/dropbear"          "${WORK_INITRAMFS}/dev"          "${WORK_INITRAMFS}/proc"          "${WORK_INITRAMFS}/sys"          "${WORK_INITRAMFS}/run"          "${WORK_INITRAMFS}/tmp"          "${WORK_INITRAMFS}/root"          "${WORK_INITRAMFS}/newroot"
 
-# Bring up network
-ip link set lo up
-ip link set eth0 up 2>/dev/null || ip link set enp0s3 up 2>/dev/null || true
-udhcpc -i eth0 -n -q -t 2 2>/dev/null || true
+# Copy BusyBox and symlinks
+cp -f /bin/busybox "${WORK_INITRAMFS}/bin/busybox"
+chroot "${WORK_INITRAMFS}" /bin/busybox --install -s /bin
 
-# Start Dropbear SSH Daemon (key auth only, port 22)
-mkdir -p /var/run /var/log
-echo "root:x:0:0:root:/root:/bin/sh" > /etc/passwd
-echo "root:*:19000:0:99999:7:::" > /etc/shadow
-dropbear -s -j -k -p 22 -r /etc/dropbear/dropbear_ed25519_host_key
-
-echo "[NADAMU LAB] Dropbear SSH running on port 22."
-echo "[NADAMU LAB] Waiting for LUKS unlock via /lib/cryptsetup/passfifo..."
-
-# Create FIFO
-mkdir -p /lib/cryptsetup
-rm -f /lib/cryptsetup/passfifo
-mknod /lib/cryptsetup/passfifo p
-
-# Wait for unlock loop
-UNLOCKED=0
-while [ $UNLOCKED -eq 0 ]; do
-    # Read from passfifo and try cryptsetup
-    cryptsetup open /dev/vda test_crypt --key-file=/lib/cryptsetup/passfifo
-    if [ -e /dev/mapper/test_crypt ]; then
-        echo "[NADAMU LAB] Successfully decrypted /dev/vda -> /dev/mapper/test_crypt!"
-        UNLOCKED=1
-    else
-        echo "[NADAMU LAB] Decryption failed, retrying passfifo..."
+# Copy Dropbear & cryptsetup & mkfs.ext4 with shared libraries
+for bin_path in /usr/sbin/dropbear /usr/bin/dropbearkey /sbin/cryptsetup /usr/sbin/mkfs.ext4 /sbin/mkfs.ext4; do
+    if [ -f "${bin_path}" ]; then
+        dest_dir="${WORK_INITRAMFS}$(dirname "${bin_path}")"
+        mkdir -p "${dest_dir}"
+        cp -f "${bin_path}" "${dest_dir}/"
+        ldd "${bin_path}" | grep -o '/lib[^ ]*' | while read -r lib; do
+            if [ -f "${lib}" ]; then
+                lib_dest="${WORK_INITRAMFS}$(dirname "${lib}")"
+                mkdir -p "${lib_dest}"
+                cp -f -u "${lib}" "${lib_dest}/" 2>/dev/null || true
+            fi
+        done
     fi
 done
 
-# Kill dropbear before switch_root
+# Copy SSH public key for Dropbear
+cat "${KEYS_DIR}/id_ed25519.pub" > "${WORK_INITRAMFS}/etc/dropbear/authorized_keys"
+chmod 600 "${WORK_INITRAMFS}/etc/dropbear/authorized_keys"
+
+# Generate Dropbear host key inside initramfs
+dropbearkey -t ed25519 -f "${WORK_INITRAMFS}/etc/dropbear/dropbear_ed25519_host_key" 2>/dev/null
+
+# Create /etc/passwd and group
+cat << 'EOF' > "${WORK_INITRAMFS}/etc/passwd"
+root:x:0:0:root:/root:/bin/sh
+EOF
+cat << 'EOF' > "${WORK_INITRAMFS}/etc/group"
+root:x:0:
+EOF
+
+# Create init script
+cat << 'EOF' > "${WORK_INITRAMFS}/init"
+#!/bin/sh
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+
+# Mount virtual filesystems
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+
+echo "=========================================="
+echo "    NADAMU TEST INITRAMFS LOADED         "
+echo "=========================================="
+
+# Create FIFO for LUKS password injection
+mkdir -p /lib/cryptsetup
+mkfifo /lib/cryptsetup/passfifo
+
+# Bring up loopback and network
+ifconfig lo 127.0.0.1 up
+ifconfig eth0 10.0.2.15 netmask 255.255.255.0 up 2>/dev/null || true
+route add default gw 10.0.2.2 2>/dev/null || true
+
+# Start Dropbear SSH Daemon
+echo "[initramfs] Starting Dropbear on port 22..."
+/usr/sbin/dropbear -E -s -j -k -p 22 -r /etc/dropbear/dropbear_ed25519_host_key
+
+echo "[initramfs] Awaiting password in /lib/cryptsetup/passfifo..."
+
+# Loop until disk is unlocked
+UNLOCKED=0
+while [ ${UNLOCKED} -eq 0 ]; do
+    PASS=$(cat /lib/cryptsetup/passfifo)
+    echo "[initramfs] Password received from passfifo. Attempting cryptsetup open..."
+    if printf "%s" "${PASS}" | cryptsetup open --type luks /dev/vda test_crypt -; then
+        echo "[initramfs] LUKS unlock SUCCESSFUL!"
+        UNLOCKED=1
+    else
+        echo "[initramfs] cryptsetup unlock FAILED! Re-opening passfifo..."
+    fi
+done
+
+# Check if filesystem exists on unlocked mapper, format if needed
+echo "[initramfs] Checking root filesystem on /dev/mapper/test_crypt..."
+if ! blkid /dev/mapper/test_crypt | grep -q "ext4"; then
+    echo "[initramfs] First boot: Formatting /dev/mapper/test_crypt as ext4..."
+    mkfs.ext4 -F /dev/mapper/test_crypt
+fi
+
+# Mount rootfs and create success flag
+mount /dev/mapper/test_crypt /newroot
+echo "NADAMU_BOOT_SUCCESS_$(date +%s)" > /newroot/BOOT_SUCCESS.txt
+echo "[initramfs] Successfully mounted rootfs. BOOT_SUCCESS.txt written."
+
+# Stop dropbear
 killall dropbear 2>/dev/null || true
 
-# Mount real root and switch_root
-mkdir -p /newroot
-mount /dev/mapper/test_crypt /newroot
+echo "=========================================="
+echo "    NADAMU: BOOT CYCLE COMPLETE           "
+echo "=========================================="
 
-echo "[NADAMU LAB] Handing over execution to real rootfs..."
-exec switch_root /newroot /sbin/init
+# Keep alive or clean exit
+sync
+poweroff -f
 EOF
-chmod +x "$INITRD_DIR/init"
 
-# Pack initramfs (cpio.gz)
-cd "$INITRD_DIR"
-find . -print0 | cpio --null -ov --format=newc | gzip -9 > "$INITRD_OUT"
-echo "[+] Initramfs packed successfully: $INITRD_OUT"
+chmod +x "${WORK_INITRAMFS}/init"
+
+# Package initramfs
+(cd "${WORK_INITRAMFS}" && find . -print0 | cpio --null --create --format=newc | gzip -9 > "${INITRD_IMG}")
+rm -rf "${WORK_INITRAMFS}"
+
+echo "[*] 6. Lab assets built successfully in ${DATA_DIR}"
