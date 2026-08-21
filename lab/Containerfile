@@ -10,7 +10,6 @@ RUN apt-get update && apt-get -o Acquire::Retries=5 install -y --fix-missing --n
     cryptsetup \
     dropbear-initramfs \
     dropbear-bin \
-    busybox-static \
     busybox \
     linux-image-amd64 \
     initramfs-tools \
