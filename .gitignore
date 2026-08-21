@@ -1,0 +1,24 @@
+# OS and Editors
+.DS_Store
+.idea/
+*.iml
+.vscode/
+
+# Build artifacts
+build/
+*.class
+*.apk
+*.aab
+
+# QEMU Test Lab images
+test-lab/*.img
+test-lab/*.iso
+test-lab/vmlinuz*
+test-lab/initrd*
+
+# Secrets and Keys
+*.pem
+*.key
+*.id_ed25519
+*.id_rsa
+!laptop/config/dropbear/authorized_keys.example
