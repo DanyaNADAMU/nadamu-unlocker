@@ -1,0 +1,21 @@
+#!/bin/sh
+
+# Setup Java and Android environment variables
+DEFAULT_JVM_OPTS='"-Xmx64m" "-Xms64m"'
+
+# Find base dir
+DIRNAME=$(dirname "$0")
+APP_HOME=$(cd "$DIRNAME" && pwd)
+
+# Execute Gradle wrapper jar if present, else fallback to standard gradle
+if [ -f "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" ]; then
+    exec java -Xmx64m -Dorg.gradle.appname=gradlew -classpath "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" org.gradle.wrapper.GradleWrapperMain "$@"
+fi
+
+# Fallback: if gradle is available in PATH
+if command -v gradle >/dev/null 2>&1; then
+    exec gradle "$@"
+fi
+
+echo "Gradle or gradle-wrapper.jar not found" >&2
+exit 1

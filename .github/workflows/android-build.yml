@@ -27,9 +27,15 @@ jobs:
         gradle-version: '8.7'
         build-root-directory: android
 
+    - name: Ensure Android SDK / Build Tools
+      run: |
+        echo "ANDROID_HOME=$ANDROID_HOME"
+        echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "platforms;android-34" "build-tools;34.0.0"
+
     - name: Build Debug APK
       working-directory: android
-      run: gradle assembleDebug --stacktrace --no-daemon
+      run: |
+        gradle assembleDebug --stacktrace --no-daemon
 
     - name: Upload Debug APK
       uses: actions/upload-artifact@v4
