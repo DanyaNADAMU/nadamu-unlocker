@@ -7,8 +7,8 @@ services:
     restart: no
     devices:
       - /dev/kvm:/dev/kvm
-    networks:
-      - agent_net
+    ports:
+      - "22:22"
     volumes:
       - ./data:/lab/data
       - .:/lab/scripts:ro
@@ -19,7 +19,3 @@ services:
           memory: 1024M
     environment:
       - LUKS_PASSWORD=password
-
-networks:
-  agent_net:
-    external: true
