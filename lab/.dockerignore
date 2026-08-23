@@ -1,4 +1,3 @@
-data/
-.git/
-__pycache__/
-*.pyc
+cd lab
+podman-compose up -d --build
+python3 lab/test_unlock.py
