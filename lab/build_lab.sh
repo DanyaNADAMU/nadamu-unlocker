@@ -12,8 +12,14 @@ echo "=== [NADAMU LAB INITIALIZATION (KALI STANDARD UPDATE-INITRAMFS)] ==="
 # 1. Generate BOTH Ed25519 and RSA keys to ensure compatibility
 echo "[*] 1. Generating fresh test SSH keys (Ed25519 and RSA)..."
 rm -f "${KEYS_DIR}/id_ed25519"* "${KEYS_DIR}/id_rsa"*
-ssh-keygen -t ed25519 -N "" -f "${KEYS_DIR}/id_ed25519" -C "nadamu-test-ed25519"
-ssh-keygen -t rsa -b 2048 -N "" -f "${KEYS_DIR}/id_rsa" -C "nadamu-test-rsa"
+
+# Force empty passphrase with -N "" and quiet mode
+ssh-keygen -q -t ed25519 -N "" -f "${KEYS_DIR}/id_ed25519" -C "nadamu-test-ed25519"
+ssh-keygen -q -t rsa -b 2048 -N "" -f "${KEYS_DIR}/id_rsa" -C "nadamu-test-rsa"
+
+# Explicitly set permissions on the host side so SSH client doesn't complain
+chmod 0600 "${KEYS_DIR}/id_ed25519" "${KEYS_DIR}/id_rsa"
+chmod 0644 "${KEYS_DIR}/id_ed25519.pub" "${KEYS_DIR}/id_rsa.pub"
 
 PUBKEY_ED25519=$(cat "${KEYS_DIR}/id_ed25519.pub")
 PUBKEY_RSA=$(cat "${KEYS_DIR}/id_rsa.pub")
@@ -59,7 +65,7 @@ for kt in rsa ecdsa ed25519; do
 done
 
 # Write config to both legacy and new Debian paths
-mkdir -p /etc/dropbear-initramfs /root/.ssh
+mkdir -p /etc/dropbear-initramfs /etc/dropbear/initramfs /root/.ssh
 echo 'DROPBEAR_OPTIONS="-p 22 -s -j -k -E"' > /etc/dropbear/initramfs/dropbear.conf
 echo 'DROPBEAR_OPTIONS="-p 22 -s -j -k -E"' > /etc/dropbear-initramfs/config
 
@@ -70,8 +76,19 @@ echo 'DROPBEAR_OPTIONS="-p 22 -s -j -k -E"' > /etc/dropbear-initramfs/config
 } > /etc/dropbear/initramfs/authorized_keys
 
 cp -f /etc/dropbear/initramfs/authorized_keys /etc/dropbear-initramfs/authorized_keys
-cp -f /etc/dropbear/initramfs/authorized_keys /root/.ssh/authorized_keys
-chmod 600 /etc/dropbear/initramfs/authorized_keys /etc/dropbear-initramfs/authorized_keys /root/.ssh/authorized_keys
+chmod 0600 /etc/dropbear/initramfs/authorized_keys /etc/dropbear-initramfs/authorized_keys
+
+# Inject runtime permission fix into the dropbear startup script!
+# This guarantees that right before dropbear starts, permissions are perfect.
+if [ -f /usr/share/initramfs-tools/scripts/init-premount/dropbear ]; then
+    sed -i '2i \
+echo "[*] Fixing Dropbear permissions at runtime..." > /dev/console \
+mkdir -p /root/.ssh \
+chown -R 0:0 /root /etc/dropbear 2>/dev/null || true \
+chmod 0700 /root /root/.ssh /etc/dropbear 2>/dev/null || true \
+chmod 0600 /root/.ssh/authorized_keys 2>/dev/null || true \
+' /usr/share/initramfs-tools/scripts/init-premount/dropbear
+fi
 
 # Make sure MODULES=most so QEMU virtio/net/blk drivers are included
 sed -i 's/^MODULES=.*/MODULES=most/' /etc/initramfs-tools/initramfs.conf 2>/dev/null || true
@@ -99,24 +116,29 @@ case "$1" in prereqs) prereqs; exit 0;; esac
 
 . /usr/share/initramfs-tools/hook-functions
 
-mkdir -p "${DESTDIR}/lib/cryptsetup" "${DESTDIR}/root/.ssh"
+mkdir -p "${DESTDIR}/lib/cryptsetup" "${DESTDIR}/root/.ssh" "${DESTDIR}/etc"
 [ -p "${DESTDIR}/lib/cryptsetup/passfifo" ] || mkfifo "${DESTDIR}/lib/cryptsetup/passfifo"
 chmod 600 "${DESTDIR}/lib/cryptsetup/passfifo"
 
 # Force copy authorized_keys
 if [ -f /etc/dropbear/initramfs/authorized_keys ]; then
     cp -f /etc/dropbear/initramfs/authorized_keys "${DESTDIR}/root/.ssh/authorized_keys"
+elif [ -f /etc/dropbear-initramfs/authorized_keys ]; then
+    cp -f /etc/dropbear-initramfs/authorized_keys "${DESTDIR}/root/.ssh/authorized_keys"
 fi
-
-# CRITICAL: Fix ownership and permissions for Dropbear
-chown -R 0:0 "${DESTDIR}/root" 2>/dev/null || true
-chmod 0700 "${DESTDIR}/root" "${DESTDIR}/root/.ssh" 2>/dev/null || true
-chmod 0600 "${DESTDIR}/root/.ssh/authorized_keys" 2>/dev/null || true
 
 # Unlock root account in shadow if it exists (Dropbear might reject locked accounts)
 if [ -f "${DESTDIR}/etc/shadow" ]; then
     sed -i 's/^root:[^:]*:/root::/' "${DESTDIR}/etc/shadow"
 fi
+# Also unlock in passwd just in case
+if [ -f "${DESTDIR}/etc/passwd" ]; then
+    sed -i 's/^root:x:/root::/' "${DESTDIR}/etc/passwd"
+    sed -i 's/^root:\*:/root::/' "${DESTDIR}/etc/passwd"
+fi
+
+# Ensure /bin/sh is in /etc/shells so Dropbear allows login
+echo "/bin/sh" >> "${DESTDIR}/etc/shells"
 
 if [ -f /lab/laptop/bin/unlock ]; then
     copy_exec /lab/laptop/bin/unlock /bin/unlock
