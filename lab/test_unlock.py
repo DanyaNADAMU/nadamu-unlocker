@@ -66,7 +66,7 @@ def inject_unlock_payload(key_path):
         cmd
     ]
     
-    print(f"[*] Sending unlock payload over SSH using key {os.basename(key_path)}...")
+    print(f"[*] Sending unlock payload over SSH using key {os.path.basename(key_path)}...")
     res = subprocess.run(ssh_cmd, capture_output=True, text=True, env=env)
     
     if res.returncode == 0:
