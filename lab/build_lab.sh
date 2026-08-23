@@ -40,6 +40,9 @@ cp -f "/boot/vmlinuz-${KERNEL_VER}" "${DATA_DIR}/vmlinuz"
 # 4. Configure standard Kali initramfs-tools & dropbear-initramfs
 echo "[*] 5. Configuring official dropbear-initramfs and hooks..."
 
+# Enable dropbear in initramfs explicitly
+echo "DROPBEAR=y" >> /etc/initramfs-tools/initramfs.conf
+
 # Generate dropbear host keys to prevent connection reset during KEX
 mkdir -p /etc/dropbear/initramfs
 for kt in rsa ecdsa ed25519; do
@@ -79,7 +82,7 @@ cat << 'EOF' > /etc/initramfs-tools/hooks/nadamu_unlock
 #!/bin/sh
 set -e
 
-PREREQ=""
+PREREQ="dropbear"
 prereqs() { echo "$PREREQ"; }
 case "$1" in prereqs) prereqs; exit 0;; esac
 
@@ -94,9 +97,6 @@ if [ -f /etc/dropbear/initramfs/authorized_keys ]; then
     cp -f /etc/dropbear/initramfs/authorized_keys "${DESTDIR}/root/.ssh/authorized_keys"
     cp -f /etc/dropbear/initramfs/authorized_keys "${DESTDIR}/etc/dropbear/authorized_keys" 2>/dev/null || true
 fi
-
-# Explicitly copy host keys
-cp -f /etc/dropbear/initramfs/dropbear_*_host_key "${DESTDIR}/etc/dropbear/" 2>/dev/null || true
 
 # Copy /bin/unlock
 if [ -f /lab/laptop/bin/unlock ]; then
