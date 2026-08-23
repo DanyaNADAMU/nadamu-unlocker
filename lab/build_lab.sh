@@ -62,8 +62,9 @@ for kt in rsa ecdsa ed25519; do
 done
 
 # Dropbear initramfs options (disable password auth, allow only key auth)
+# Removed '-w' because it disables root logins!
 mkdir -p /root/.ssh
-echo 'DROPBEAR_OPTIONS="-p 22 -s -j -k -w"' > /etc/dropbear/initramfs/dropbear.conf
+echo 'DROPBEAR_OPTIONS="-p 22 -s -j -k"' > /etc/dropbear/initramfs/dropbear.conf
 echo "${PUBKEY_CONTENT}" > /etc/dropbear/initramfs/authorized_keys
 echo "${PUBKEY_CONTENT}" > /root/.ssh/authorized_keys
 chmod 600 /etc/dropbear/initramfs/authorized_keys /root/.ssh/authorized_keys 2>/dev/null || true
@@ -103,10 +104,14 @@ mkdir -p "${DESTDIR}/lib/cryptsetup" "${DESTDIR}/root/.ssh" "${DESTDIR}/etc/drop
 [ -p "${DESTDIR}/lib/cryptsetup/passfifo" ] || mkfifo "${DESTDIR}/lib/cryptsetup/passfifo"
 chmod 600 "${DESTDIR}/lib/cryptsetup/passfifo"
 
+# Dropbear is strict about permissions
+chmod 700 "${DESTDIR}/root" "${DESTDIR}/root/.ssh" 2>/dev/null || true
+
 # Ensure authorized_keys are copied to all potential dropbear search paths
 if [ -f /etc/dropbear/initramfs/authorized_keys ]; then
     cp -f /etc/dropbear/initramfs/authorized_keys "${DESTDIR}/root/.ssh/authorized_keys"
     cp -f /etc/dropbear/initramfs/authorized_keys "${DESTDIR}/etc/dropbear/authorized_keys" 2>/dev/null || true
+    chmod 600 "${DESTDIR}/root/.ssh/authorized_keys" "${DESTDIR}/etc/dropbear/authorized_keys" 2>/dev/null || true
 fi
 
 # Copy /bin/unlock
