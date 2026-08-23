@@ -9,21 +9,18 @@ mkdir -p "${DATA_DIR}" "${KEYS_DIR}"
 
 echo "=== [NADAMU LAB INITIALIZATION (KALI STANDARD UPDATE-INITRAMFS)] ==="
 
-# 1. Generate BOTH Ed25519 and RSA keys to ensure compatibility
-echo "[*] 1. Generating fresh test SSH keys (Ed25519 and RSA)..."
-rm -f "${KEYS_DIR}/id_ed25519"* "${KEYS_DIR}/id_rsa"*
+# 1. Generate Ed25519 key
+echo "[*] 1. Generating fresh test SSH key (Ed25519)..."
+rm -f "${KEYS_DIR}/id_ed25519"*
 
 # Force empty passphrase with -N "" and quiet mode
-# Use -m PEM for RSA to prevent Python/Paramiko from falsely thinking the key is encrypted
 ssh-keygen -q -t ed25519 -N "" -f "${KEYS_DIR}/id_ed25519" -C "nadamu-test-ed25519"
-ssh-keygen -q -t rsa -b 2048 -m PEM -N "" -f "${KEYS_DIR}/id_rsa" -C "nadamu-test-rsa"
 
 # Explicitly set permissions on the host side so SSH client doesn't complain
-chmod 0600 "${KEYS_DIR}/id_ed25519" "${KEYS_DIR}/id_rsa"
-chmod 0644 "${KEYS_DIR}/id_ed25519.pub" "${KEYS_DIR}/id_rsa.pub"
+chmod 0600 "${KEYS_DIR}/id_ed25519"
+chmod 0644 "${KEYS_DIR}/id_ed25519.pub"
 
 PUBKEY_ED25519=$(cat "${KEYS_DIR}/id_ed25519.pub")
-PUBKEY_RSA=$(cat "${KEYS_DIR}/id_rsa.pub")
 
 # 2. Create raw test disk image (500MB sparse) if missing
 if [ ! -f "${DATA_DIR}/test_disk.img" ]; then
@@ -70,11 +67,8 @@ mkdir -p /etc/dropbear-initramfs /etc/dropbear/initramfs /root/.ssh
 echo 'DROPBEAR_OPTIONS="-p 22 -s -j -k -E"' > /etc/dropbear/initramfs/dropbear.conf
 echo 'DROPBEAR_OPTIONS="-p 22 -s -j -k -E"' > /etc/dropbear-initramfs/config
 
-# Add both keys to authorized_keys
-{
-    echo "${PUBKEY_ED25519}"
-    echo "${PUBKEY_RSA}"
-} > /etc/dropbear/initramfs/authorized_keys
+# Add key to authorized_keys
+echo "${PUBKEY_ED25519}" > /etc/dropbear/initramfs/authorized_keys
 
 cp -f /etc/dropbear/initramfs/authorized_keys /etc/dropbear-initramfs/authorized_keys
 chmod 0600 /etc/dropbear/initramfs/authorized_keys /etc/dropbear-initramfs/authorized_keys
