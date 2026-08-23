@@ -31,7 +31,7 @@ exec qemu-system-x86_64 \
     -kernel "$KERNEL" \
     -initrd "$INITRD_IMG" \
     -drive file="$DISK_IMG",format=raw,if=virtio \
-    -netdev user,id=net0,hostfwd=tcp::2222-:22 \
+    -netdev user,id=net0,hostfwd=tcp::22-:22 \
     -device virtio-net-pci,netdev=net0 \
     -append "console=ttyS0 root=/dev/mapper/test_crypt cryptopts=target=test_crypt,source=/dev/vda,lvm=none ip=dhcp boot=local panic=0" \
     -serial mon:stdio
