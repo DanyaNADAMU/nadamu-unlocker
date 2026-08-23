@@ -43,10 +43,19 @@ echo "[*] 5. Configuring official dropbear-initramfs and hooks..."
 # Enable dropbear in initramfs explicitly
 echo "DROPBEAR=y" >> /etc/initramfs-tools/initramfs.conf
 
-# Generate dropbear host keys to prevent connection reset during KEX
+# Verify dropbear hook exists
+if [ ! -f /usr/share/initramfs-tools/hooks/dropbear ]; then
+    echo "[-] ERROR: dropbear hook not found at /usr/share/initramfs-tools/hooks/dropbear"
+    echo "[-] dropbear-initramfs package may not be installed correctly"
+    exit 1
+fi
+echo "[*] Found dropbear hook: /usr/share/initramfs-tools/hooks/dropbear"
+
+# Generate dropbear host keys in standard location for dropbear-initramfs hook
 mkdir -p /etc/dropbear/initramfs
 for kt in rsa ecdsa ed25519; do
     if [ ! -f "/etc/dropbear/initramfs/dropbear_${kt}_host_key" ]; then
+        echo "[*] Generating dropbear ${kt} host key..."
         dropbearkey -t ${kt} -f "/etc/dropbear/initramfs/dropbear_${kt}_host_key" 2>/dev/null || true
     fi
 done
@@ -78,6 +87,7 @@ EOF
 mkdir -p /etc/initramfs-tools/hooks /etc/initramfs-tools/scripts/local-top
 
 # Hook to copy /bin/unlock helper and setup passfifo support
+# Runs AFTER the standard dropbear hook (PREREQ="dropbear")
 cat << 'EOF' > /etc/initramfs-tools/hooks/nadamu_unlock
 #!/bin/sh
 set -e
@@ -150,9 +160,16 @@ exit 0
 EOF
 chmod +x /etc/initramfs-tools/scripts/local-top/nadamu_cryptroot
 
-# Build standard Kali initramfs using update-initramfs
+# Build standard Kali initramfs using update-initramfs with verbose output
 echo "[*] 6. Building official Kali initramfs image via update-initramfs..."
-update-initramfs -u -k "${KERNEL_VER}" || update-initramfs -c -k "${KERNEL_VER}"
+update-initramfs -v -u -k "${KERNEL_VER}" 2>&1 | tee /tmp/initramfs-build.log || update-initramfs -v -c -k "${KERNEL_VER}" 2>&1 | tee /tmp/initramfs-build.log
+
+# Verify dropbear hook ran
+if grep -q "dropbear" /tmp/initramfs-build.log; then
+    echo "[+] dropbear hook executed during initramfs build"
+else
+    echo "[!] WARNING: dropbear hook may not have run - check /tmp/initramfs-build.log"
+fi
 
 # Copy the generated initramfs to data directory
 cp -f "/boot/initrd.img-${KERNEL_VER}" "${DATA_DIR}/test_initrd.img"
