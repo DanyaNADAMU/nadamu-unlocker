@@ -8,9 +8,6 @@ services:
     restart: no
     devices:
       - /dev/kvm:/dev/kvm
-    # Inherit host user supplementary groups (e.g. kvm) in rootless mode
-    group_add:
-      - keep-groups
     # Disable SELinux relabeling of bind mounts (required on Fedora/RHEL hosts)
     security_opt:
       - label=disable
