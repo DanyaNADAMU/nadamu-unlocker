@@ -3,19 +3,24 @@ services:
     build:
       context: .
       dockerfile: Containerfile
+    image: localhost/nadamu-unlocker-lab:latest
     container_name: nadamu-unlocker-lab
     restart: no
     devices:
       - /dev/kvm:/dev/kvm
+    # Inherit host user supplementary groups (e.g. kvm) in rootless mode
+    group_add:
+      - keep-groups
+    # Disable SELinux relabeling of bind mounts (required on Fedora/RHEL hosts)
+    security_opt:
+      - label=disable
     ports:
       - "2222:22"
     volumes:
       - ./data:/lab/data
       - .:/lab/scripts:ro
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 1024M
+    # Compose v2 style limits (better supported than deploy.resources)
+    mem_limit: 1024m
+    cpus: 1.0
     environment:
       - LUKS_PASSWORD=password
