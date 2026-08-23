@@ -35,6 +35,11 @@ def wait_for_port(host, port, timeout=60):
     return False
 
 def inject_unlock_payload(key_path):
+    if not os.path.exists(key_path):
+        print(f"[-] ERROR: SSH key not found at {key_path}")
+        print("[-] The lab container might still be building or failed to generate keys.")
+        return False
+
     cmd = (
         f"for f in /lib/cryptsetup/passfifo /run/cryptsetup/passfifo; do "
         f"[ -p \"$f\" ] && printf \"%s\" \"{PASS}\" > \"$f\" && exit 0; "
@@ -53,6 +58,9 @@ def inject_unlock_payload(key_path):
         "-o", "UserKnownHostsFile=/dev/null",
         "-o", "IdentitiesOnly=yes",
         "-o", "BatchMode=yes",
+        "-o", "PasswordAuthentication=no",
+        "-o", "KbdInteractiveAuthentication=no",
+        "-o", "PubkeyAuthentication=yes",
         "-o", "ConnectTimeout=5",
         f"root@{SSH_HOST}",
         cmd
@@ -76,12 +84,6 @@ if __name__ == "__main__":
     print("[*] Attempting unlock with Ed25519 key...")
     if inject_unlock_payload(KEY_PATH):
         print("[*] Unlock command finished successfully.")
-        sys.exit(0)
-        
-    print("[*] Ed25519 failed. Attempting fallback to RSA key...")
-    rsa_path = KEY_PATH.replace("id_ed25519", "id_rsa")
-    if os.path.exists(rsa_path) and inject_unlock_payload(rsa_path):
-        print("[*] Unlock command finished successfully with RSA.")
         sys.exit(0)
         
     sys.exit(1)
