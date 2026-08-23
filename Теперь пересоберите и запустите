@@ -1,0 +1,2 @@
+docker compose -f lab/compose.yml down && docker compose -f lab/compose.yml up --build -d
+python lab/test_unlock.py

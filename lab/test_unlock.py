@@ -14,7 +14,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_KEY_PATH = os.path.join(SCRIPT_DIR, "data", "keys", "id_ed25519")
 
 SSH_HOST = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
-SSH_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 22
+SSH_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 2222
 KEY_PATH = sys.argv[3] if len(sys.argv) > 3 else DEFAULT_KEY_PATH
 PASS = sys.argv[4] if len(sys.argv) > 4 else "password"
 
