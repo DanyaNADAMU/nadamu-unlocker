@@ -14,8 +14,9 @@ echo "[*] 1. Generating fresh test SSH keys (Ed25519 and RSA)..."
 rm -f "${KEYS_DIR}/id_ed25519"* "${KEYS_DIR}/id_rsa"*
 
 # Force empty passphrase with -N "" and quiet mode
+# Use -m PEM for RSA to prevent Python/Paramiko from falsely thinking the key is encrypted
 ssh-keygen -q -t ed25519 -N "" -f "${KEYS_DIR}/id_ed25519" -C "nadamu-test-ed25519"
-ssh-keygen -q -t rsa -b 2048 -N "" -f "${KEYS_DIR}/id_rsa" -C "nadamu-test-rsa"
+ssh-keygen -q -t rsa -b 2048 -m PEM -N "" -f "${KEYS_DIR}/id_rsa" -C "nadamu-test-rsa"
 
 # Explicitly set permissions on the host side so SSH client doesn't complain
 chmod 0600 "${KEYS_DIR}/id_ed25519" "${KEYS_DIR}/id_rsa"
