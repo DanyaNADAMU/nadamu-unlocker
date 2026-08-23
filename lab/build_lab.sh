@@ -40,9 +40,17 @@ cp -f "/boot/vmlinuz-${KERNEL_VER}" "${DATA_DIR}/vmlinuz"
 # 4. Configure standard Kali initramfs-tools & dropbear-initramfs
 echo "[*] 5. Configuring official dropbear-initramfs and hooks..."
 
+# Generate dropbear host keys to prevent connection reset during KEX
+mkdir -p /etc/dropbear
+for kt in rsa ecdsa ed25519; do
+    if [ ! -f "/etc/dropbear/dropbear_${kt}_host_key" ]; then
+        dropbearkey -t ${kt} -f "/etc/dropbear/dropbear_${kt}_host_key" 2>/dev/null || true
+    fi
+done
+
 # Dropbear initramfs options (disable password auth, allow only key auth)
 mkdir -p /etc/dropbear/initramfs /root/.ssh
-echo 'DROPBEAR_OPTIONS="-p 22 -s -j -k -s -w"' > /etc/dropbear/initramfs/dropbear.conf
+echo 'DROPBEAR_OPTIONS="-p 22 -s -j -k -w"' > /etc/dropbear/initramfs/dropbear.conf
 echo "${PUBKEY_CONTENT}" > /etc/dropbear/initramfs/authorized_keys
 echo "${PUBKEY_CONTENT}" > /root/.ssh/authorized_keys
 chmod 600 /etc/dropbear/initramfs/authorized_keys /root/.ssh/authorized_keys 2>/dev/null || true

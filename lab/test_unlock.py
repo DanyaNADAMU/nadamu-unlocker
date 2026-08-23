@@ -31,6 +31,11 @@ def wait_for_port(host, port, timeout=60):
                 if b"SSH" in banner:
                     print(f"[+] SSH service at {port} is open and ready!")
                     return True
+                elif banner == b"":
+                    # Connection closed immediately by peer (e.g. Dropbear crashing due to missing host keys)
+                    pass
+                else:
+                    print(f"[*] Received non-SSH data: {banner}")
         except (socket.timeout, ConnectionRefusedError, OSError, ConnectionResetError):
             pass
         time.sleep(1)
