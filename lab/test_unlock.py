@@ -11,7 +11,7 @@ import subprocess
 
 # Resolve paths relative to the script's location
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_KEY_PATH = os.path.join(SCRIPT_DIR, "data", "keys", "id_ed25519")
+DEFAULT_KEY_PATH = os.path.join(SCRIPT_DIR, "data", "keys", "id_rsa")
 
 SSH_HOST = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
 SSH_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 2222
@@ -54,6 +54,7 @@ def inject_unlock_payload():
         "-p", str(SSH_PORT),
         "-o", "StrictHostKeyChecking=no",
         "-o", "UserKnownHostsFile=/dev/null",
+        "-o", "IdentitiesOnly=yes",
         "-o", "ConnectTimeout=5",
         f"root@{SSH_HOST}",
         cmd

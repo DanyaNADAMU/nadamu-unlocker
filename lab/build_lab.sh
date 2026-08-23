@@ -9,13 +9,13 @@ mkdir -p "${DATA_DIR}" "${KEYS_DIR}"
 
 echo "=== [NADAMU LAB INITIALIZATION (KALI STANDARD UPDATE-INITRAMFS)] ==="
 
-# 1. Generate SSH key pair for test client if missing
-if [ ! -f "${KEYS_DIR}/id_ed25519" ]; then
-    echo "[*] 1. Generating test SSH keys (ed25519)..."
-    ssh-keygen -t ed25519 -N "" -f "${KEYS_DIR}/id_ed25519" -C "nadamu-test-client"
+# 1. Generate SSH key pair for test client if missing (using RSA for max compatibility)
+if [ ! -f "${KEYS_DIR}/id_rsa" ]; then
+    echo "[*] 1. Generating test SSH keys (rsa)..."
+    ssh-keygen -t rsa -b 2048 -N "" -f "${KEYS_DIR}/id_rsa" -C "nadamu-test-client"
 fi
 
-PUBKEY_CONTENT=$(cat "${KEYS_DIR}/id_ed25519.pub")
+PUBKEY_CONTENT=$(cat "${KEYS_DIR}/id_rsa.pub")
 
 # 2. Create raw test disk image (500MB sparse) if missing
 if [ ! -f "${DATA_DIR}/test_disk.img" ]; then
@@ -61,10 +61,9 @@ for kt in rsa ecdsa ed25519; do
     fi
 done
 
-# Dropbear initramfs options (disable password auth, allow only key auth)
-# Removed '-w' because it disables root logins!
+# Dropbear initramfs options (disable password auth, allow only key auth, log to stderr)
 mkdir -p /root/.ssh
-echo 'DROPBEAR_OPTIONS="-p 22 -s -j -k"' > /etc/dropbear/initramfs/dropbear.conf
+echo 'DROPBEAR_OPTIONS="-p 22 -s -j -k -E"' > /etc/dropbear/initramfs/dropbear.conf
 echo "${PUBKEY_CONTENT}" > /etc/dropbear/initramfs/authorized_keys
 echo "${PUBKEY_CONTENT}" > /root/.ssh/authorized_keys
 chmod 600 /etc/dropbear/initramfs/authorized_keys /root/.ssh/authorized_keys 2>/dev/null || true
@@ -100,18 +99,19 @@ case "$1" in prereqs) prereqs; exit 0;; esac
 
 . /usr/share/initramfs-tools/hook-functions
 
-mkdir -p "${DESTDIR}/lib/cryptsetup" "${DESTDIR}/root/.ssh" "${DESTDIR}/etc/dropbear"
+mkdir -p "${DESTDIR}/lib/cryptsetup" "${DESTDIR}/root/.ssh" "${DESTDIR}/.ssh" "${DESTDIR}/etc/dropbear"
 [ -p "${DESTDIR}/lib/cryptsetup/passfifo" ] || mkfifo "${DESTDIR}/lib/cryptsetup/passfifo"
 chmod 600 "${DESTDIR}/lib/cryptsetup/passfifo"
 
 # Dropbear is strict about permissions
-chmod 700 "${DESTDIR}/root" "${DESTDIR}/root/.ssh" 2>/dev/null || true
+chmod 700 "${DESTDIR}/root" "${DESTDIR}/root/.ssh" "${DESTDIR}/.ssh" 2>/dev/null || true
 
 # Ensure authorized_keys are copied to all potential dropbear search paths
 if [ -f /etc/dropbear/initramfs/authorized_keys ]; then
     cp -f /etc/dropbear/initramfs/authorized_keys "${DESTDIR}/root/.ssh/authorized_keys"
+    cp -f /etc/dropbear/initramfs/authorized_keys "${DESTDIR}/.ssh/authorized_keys" 2>/dev/null || true
     cp -f /etc/dropbear/initramfs/authorized_keys "${DESTDIR}/etc/dropbear/authorized_keys" 2>/dev/null || true
-    chmod 600 "${DESTDIR}/root/.ssh/authorized_keys" "${DESTDIR}/etc/dropbear/authorized_keys" 2>/dev/null || true
+    chmod 600 "${DESTDIR}/root/.ssh/authorized_keys" "${DESTDIR}/.ssh/authorized_keys" "${DESTDIR}/etc/dropbear/authorized_keys" 2>/dev/null || true
 fi
 
 # Copy /bin/unlock
