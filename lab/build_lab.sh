@@ -41,15 +41,15 @@ cp -f "/boot/vmlinuz-${KERNEL_VER}" "${DATA_DIR}/vmlinuz"
 echo "[*] 5. Configuring official dropbear-initramfs and hooks..."
 
 # Generate dropbear host keys to prevent connection reset during KEX
-mkdir -p /etc/dropbear
+mkdir -p /etc/dropbear/initramfs
 for kt in rsa ecdsa ed25519; do
-    if [ ! -f "/etc/dropbear/dropbear_${kt}_host_key" ]; then
-        dropbearkey -t ${kt} -f "/etc/dropbear/dropbear_${kt}_host_key" 2>/dev/null || true
+    if [ ! -f "/etc/dropbear/initramfs/dropbear_${kt}_host_key" ]; then
+        dropbearkey -t ${kt} -f "/etc/dropbear/initramfs/dropbear_${kt}_host_key" 2>/dev/null || true
     fi
 done
 
 # Dropbear initramfs options (disable password auth, allow only key auth)
-mkdir -p /etc/dropbear/initramfs /root/.ssh
+mkdir -p /root/.ssh
 echo 'DROPBEAR_OPTIONS="-p 22 -s -j -k -w"' > /etc/dropbear/initramfs/dropbear.conf
 echo "${PUBKEY_CONTENT}" > /etc/dropbear/initramfs/authorized_keys
 echo "${PUBKEY_CONTENT}" > /root/.ssh/authorized_keys
@@ -94,6 +94,9 @@ if [ -f /etc/dropbear/initramfs/authorized_keys ]; then
     cp -f /etc/dropbear/initramfs/authorized_keys "${DESTDIR}/root/.ssh/authorized_keys"
     cp -f /etc/dropbear/initramfs/authorized_keys "${DESTDIR}/etc/dropbear/authorized_keys" 2>/dev/null || true
 fi
+
+# Explicitly copy host keys
+cp -f /etc/dropbear/initramfs/dropbear_*_host_key "${DESTDIR}/etc/dropbear/" 2>/dev/null || true
 
 # Copy /bin/unlock
 if [ -f /lab/laptop/bin/unlock ]; then

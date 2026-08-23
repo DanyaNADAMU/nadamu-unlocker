@@ -15,14 +15,8 @@ echo "[*] Using kernel: $KERNEL"
 # Check KVM availability
 KVM_FLAG="-machine q35,accel=tcg"
 if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
-    echo "[+] /dev/kvm is readable/writable, testing KVM acceleration..."
-    if qemu-system-x86_64 -enable-kvm -machine accel=kvm -display none -vga none 2>&1 | grep -iq "failed to initialize kvm\|permission denied"; then
-        echo "[!] KVM failed permission test. Falling back to TCG software emulation."
-        KVM_FLAG="-machine q35,accel=tcg"
-    else
-        echo "[+] KVM hardware acceleration enabled!"
-        KVM_FLAG="-enable-kvm -cpu host"
-    fi
+    echo "[+] /dev/kvm is readable/writable, enabling KVM hardware acceleration!"
+    KVM_FLAG="-enable-kvm -cpu host"
 else
     echo "[!] /dev/kvm not writable (or missing). Using TCG software emulation."
     KVM_FLAG="-machine q35,accel=tcg"

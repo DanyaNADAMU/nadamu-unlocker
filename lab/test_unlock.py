@@ -23,10 +23,10 @@ def wait_for_port(host, port, timeout=60):
     start = time.time()
     while time.time() - start < timeout:
         try:
-            with socket.create_connection((host, port), timeout=2) as sock:
+            with socket.create_connection((host, port), timeout=5) as sock:
                 # QEMU opens the port immediately, but the guest OS might not be ready.
                 # We must wait until the actual SSH daemon sends its banner.
-                sock.settimeout(2)
+                sock.settimeout(5)
                 banner = sock.recv(1024)
                 if b"SSH" in banner:
                     print(f"[+] SSH service at {port} is open and ready!")
