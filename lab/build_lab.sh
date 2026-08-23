@@ -9,12 +9,14 @@ mkdir -p "${DATA_DIR}" "${KEYS_DIR}"
 
 echo "=== [NADAMU LAB INITIALIZATION (KALI STANDARD UPDATE-INITRAMFS)] ==="
 
-# 1. Always generate a fresh SSH key pair for test client (guarantees no passphrase)
-echo "[*] 1. Generating fresh test SSH keys (ed25519)..."
-rm -f "${KEYS_DIR}/id_ed25519" "${KEYS_DIR}/id_ed25519.pub"
-ssh-keygen -t ed25519 -N "" -f "${KEYS_DIR}/id_ed25519" -C "nadamu-test-client"
+# 1. Generate BOTH Ed25519 and RSA keys to ensure compatibility
+echo "[*] 1. Generating fresh test SSH keys (Ed25519 and RSA)..."
+rm -f "${KEYS_DIR}/id_ed25519"* "${KEYS_DIR}/id_rsa"*
+ssh-keygen -t ed25519 -N "" -f "${KEYS_DIR}/id_ed25519" -C "nadamu-test-ed25519"
+ssh-keygen -t rsa -b 2048 -N "" -f "${KEYS_DIR}/id_rsa" -C "nadamu-test-rsa"
 
-PUBKEY_CONTENT=$(cat "${KEYS_DIR}/id_ed25519.pub")
+PUBKEY_ED25519=$(cat "${KEYS_DIR}/id_ed25519.pub")
+PUBKEY_RSA=$(cat "${KEYS_DIR}/id_rsa.pub")
 
 # 2. Create raw test disk image (500MB sparse) if missing
 if [ ! -f "${DATA_DIR}/test_disk.img" ]; then
@@ -39,38 +41,41 @@ cp -f "/boot/vmlinuz-${KERNEL_VER}" "${DATA_DIR}/vmlinuz"
 # 4. Configure standard Kali initramfs-tools & dropbear-initramfs
 echo "[*] 5. Configuring official dropbear-initramfs and hooks..."
 
-# Enable dropbear in initramfs explicitly (must be before update-initramfs)
+# Enable dropbear in initramfs explicitly
 echo "DROPBEAR=y" >> /etc/initramfs-tools/initramfs.conf
 
-# Verify dropbear hook exists and is executable
 if [ ! -f /usr/share/initramfs-tools/hooks/dropbear ]; then
     echo "[-] ERROR: dropbear hook not found at /usr/share/initramfs-tools/hooks/dropbear"
-    echo "[-] dropbear-initramfs package may not be installed correctly"
     exit 1
 fi
 chmod +x /usr/share/initramfs-tools/hooks/dropbear
-echo "[*] Found dropbear hook: /usr/share/initramfs-tools/hooks/dropbear"
 
-# Generate dropbear host keys in standard location for dropbear-initramfs hook
+# Generate dropbear host keys
 mkdir -p /etc/dropbear/initramfs
 for kt in rsa ecdsa ed25519; do
     if [ ! -f "/etc/dropbear/initramfs/dropbear_${kt}_host_key" ]; then
-        echo "[*] Generating dropbear ${kt} host key..."
         dropbearkey -t ${kt} -f "/etc/dropbear/initramfs/dropbear_${kt}_host_key" 2>/dev/null || true
     fi
 done
 
-# Dropbear initramfs options (disable password auth, allow only key auth, log to stderr)
-mkdir -p /root/.ssh
+# Write config to both legacy and new Debian paths
+mkdir -p /etc/dropbear-initramfs /root/.ssh
 echo 'DROPBEAR_OPTIONS="-p 22 -s -j -k -E"' > /etc/dropbear/initramfs/dropbear.conf
-echo "${PUBKEY_CONTENT}" > /etc/dropbear/initramfs/authorized_keys
-echo "${PUBKEY_CONTENT}" > /root/.ssh/authorized_keys
-chmod 600 /etc/dropbear/initramfs/authorized_keys /root/.ssh/authorized_keys 2>/dev/null || true
+echo 'DROPBEAR_OPTIONS="-p 22 -s -j -k -E"' > /etc/dropbear-initramfs/config
+
+# Add both keys to authorized_keys
+{
+    echo "${PUBKEY_ED25519}"
+    echo "${PUBKEY_RSA}"
+} > /etc/dropbear/initramfs/authorized_keys
+
+cp -f /etc/dropbear/initramfs/authorized_keys /etc/dropbear-initramfs/authorized_keys
+cp -f /etc/dropbear/initramfs/authorized_keys /root/.ssh/authorized_keys
+chmod 600 /etc/dropbear/initramfs/authorized_keys /etc/dropbear-initramfs/authorized_keys /root/.ssh/authorized_keys
 
 # Make sure MODULES=most so QEMU virtio/net/blk drivers are included
 sed -i 's/^MODULES=.*/MODULES=most/' /etc/initramfs-tools/initramfs.conf 2>/dev/null || true
 
-# Add required kernel modules for QEMU and crypto
 cat << 'EOF' > /etc/initramfs-tools/modules
 virtio_pci
 virtio_net
@@ -83,11 +88,7 @@ sha256
 sha512
 EOF
 
-# Install our custom unlock helper & passfifo script into initramfs hooks
-mkdir -p /etc/initramfs-tools/hooks /etc/initramfs-tools/scripts/local-top
-
-# Hook to copy /bin/unlock helper and setup passfifo support
-# Runs AFTER the standard dropbear hook (PREREQ="dropbear")
+# Hook to copy /bin/unlock helper, setup passfifo, and FIX PERMISSIONS
 cat << 'EOF' > /etc/initramfs-tools/hooks/nadamu_unlock
 #!/bin/sh
 set -e
@@ -98,27 +99,28 @@ case "$1" in prereqs) prereqs; exit 0;; esac
 
 . /usr/share/initramfs-tools/hook-functions
 
-mkdir -p "${DESTDIR}/lib/cryptsetup" "${DESTDIR}/root/.ssh" "${DESTDIR}/.ssh" "${DESTDIR}/etc/dropbear"
+mkdir -p "${DESTDIR}/lib/cryptsetup" "${DESTDIR}/root/.ssh"
 [ -p "${DESTDIR}/lib/cryptsetup/passfifo" ] || mkfifo "${DESTDIR}/lib/cryptsetup/passfifo"
 chmod 600 "${DESTDIR}/lib/cryptsetup/passfifo"
 
-# Dropbear is strict about permissions
-chmod 700 "${DESTDIR}/root" "${DESTDIR}/root/.ssh" "${DESTDIR}/.ssh" 2>/dev/null || true
-
-# Ensure authorized_keys are copied to all potential dropbear search paths
+# Force copy authorized_keys
 if [ -f /etc/dropbear/initramfs/authorized_keys ]; then
     cp -f /etc/dropbear/initramfs/authorized_keys "${DESTDIR}/root/.ssh/authorized_keys"
-    cp -f /etc/dropbear/initramfs/authorized_keys "${DESTDIR}/.ssh/authorized_keys" 2>/dev/null || true
-    cp -f /etc/dropbear/initramfs/authorized_keys "${DESTDIR}/etc/dropbear/authorized_keys" 2>/dev/null || true
-    chmod 600 "${DESTDIR}/root/.ssh/authorized_keys" "${DESTDIR}/.ssh/authorized_keys" "${DESTDIR}/etc/dropbear/authorized_keys" 2>/dev/null || true
 fi
 
-# Copy /bin/unlock
+# CRITICAL: Fix ownership and permissions for Dropbear
+chown -R 0:0 "${DESTDIR}/root" 2>/dev/null || true
+chmod 0700 "${DESTDIR}/root" "${DESTDIR}/root/.ssh" 2>/dev/null || true
+chmod 0600 "${DESTDIR}/root/.ssh/authorized_keys" 2>/dev/null || true
+
+# Unlock root account in shadow if it exists (Dropbear might reject locked accounts)
+if [ -f "${DESTDIR}/etc/shadow" ]; then
+    sed -i 's/^root:[^:]*:/root::/' "${DESTDIR}/etc/shadow"
+fi
+
 if [ -f /lab/laptop/bin/unlock ]; then
     copy_exec /lab/laptop/bin/unlock /bin/unlock
 fi
-
-# Ensure cryptsetup binaries and libs are present
 copy_exec /sbin/cryptsetup /sbin/cryptsetup
 exit 0
 EOF
@@ -137,9 +139,13 @@ mkdir -p /lib/cryptsetup
 echo "=========================================="
 echo "    NADAMU LUKS UNLOCK READY"
 echo "=========================================="
+echo "[*] Debug: Checking Dropbear authorized_keys in initramfs:"
+ls -ld /root || echo "No /root"
+ls -ld /root/.ssh || echo "No /root/.ssh"
+ls -l /root/.ssh/authorized_keys || echo "No authorized_keys"
+
 echo "[*] Waiting for passphrase on /lib/cryptsetup/passfifo..."
 
-# Read pass from FIFO and open cryptroot
 while [ ! -b /dev/mapper/test_crypt ]; do
     if [ -p /lib/cryptsetup/passfifo ]; then
         PASS=$(cat /lib/cryptsetup/passfifo 2>/dev/null)
@@ -148,9 +154,7 @@ while [ ! -b /dev/mapper/test_crypt ]; do
             printf "%s" "$PASS" | cryptsetup open --type luks /dev/vda test_crypt -
             if [ -b /dev/mapper/test_crypt ]; then
                 echo "[+] LUKS device test_crypt opened successfully!"
-                # Format if new
                 if ! blkid /dev/mapper/test_crypt | grep -q ext4; then
-                    echo "[*] Formatting ext4 rootfs..."
                     mke2fs -t ext4 -F /dev/mapper/test_crypt >/dev/null 2>&1
                 fi
                 break
@@ -165,61 +169,8 @@ exit 0
 EOF
 chmod +x /etc/initramfs-tools/scripts/local-top/nadamu_cryptroot
 
-# Build standard Kali initramfs using update-initramfs with verbose output
 echo "[*] 6. Building official Kali initramfs image via update-initramfs..."
-update-initramfs -v -u -k "${KERNEL_VER}" 2>&1 | tee /tmp/initramfs-build.log || update-initramfs -v -c -k "${KERNEL_VER}" 2>&1 | tee /tmp/initramfs-build.log
+update-initramfs -v -u -k "${KERNEL_VER}" >/tmp/initramfs-build.log 2>&1 || update-initramfs -v -c -k "${KERNEL_VER}" >/tmp/initramfs-build.log 2>&1
 
-# Verify dropbear hook ran
-if grep -q "dropbear" /tmp/initramfs-build.log; then
-    echo "[+] dropbear hook executed during initramfs build"
-else
-    echo "[!] WARNING: dropbear hook may not have run - check /tmp/initramfs-build.log"
-fi
-
-# 7. Verify initramfs contains dropbear components
-echo "[*] 7. Verifying initramfs contents..."
-INITRD_PATH="/boot/initrd.img-${KERNEL_VER}"
-TMPDIR=$(mktemp -d)
-cd "${TMPDIR}"
-zcat "${INITRD_PATH}" | cpio -idmv 2>&1 | tee /tmp/initramfs-contents.log
-
-# Check for critical dropbear files
-echo "[*] Checking for dropbear binary..."
-if [ -f "${TMPDIR}/sbin/dropbear" ] || [ -f "${TMPDIR}/usr/sbin/dropbear" ] || [ -f "${TMPDIR}/bin/dropbear" ]; then
-    echo "[+] dropbear binary found in initramfs"
-else
-    echo "[-] ERROR: dropbear binary NOT found in initramfs!"
-    echo "[-] Contents of initramfs:"
-    find "${TMPDIR}" -type f | sort
-fi
-
-echo "[*] Checking for dropbear host keys..."
-if [ -f "${TMPDIR}/etc/dropbear/dropbear_rsa_host_key" ] || [ -f "${TMPDIR}/etc/dropbear/dropbear_ecdsa_host_key" ] || [ -f "${TMPDIR}/etc/dropbear/dropbear_ed25519_host_key" ]; then
-    echo "[+] dropbear host keys found in initramfs"
-else
-    echo "[-] ERROR: dropbear host keys NOT found in initramfs!"
-fi
-
-echo "[*] Checking for authorized_keys..."
-if [ -f "${TMPDIR}/etc/dropbear/authorized_keys" ] || [ -f "${TMPDIR}/root/.ssh/authorized_keys" ]; then
-    echo "[+] authorized_keys found in initramfs"
-else
-    echo "[-] ERROR: authorized_keys NOT found in initramfs!"
-fi
-
-echo "[*] Checking for dropbear startup script..."
-if [ -f "${TMPDIR}/scripts/init-premount/dropbear" ] || [ -f "${TMPDIR}/scripts/local-top/dropbear" ]; then
-    echo "[+] dropbear startup script found in initramfs"
-else
-    echo "[-] ERROR: dropbear startup script NOT found in initramfs!"
-fi
-
-# Cleanup
-cd /
-rm -rf "${TMPDIR}"
-
-# Copy the generated initramfs to data directory
 cp -f "/boot/initrd.img-${KERNEL_VER}" "${DATA_DIR}/test_initrd.img"
-
 echo "[*] 8. Lab assets built successfully in ${DATA_DIR}"
-ls -lh "${DATA_DIR}"

@@ -9,7 +9,6 @@ import time
 import socket
 import subprocess
 
-# Resolve paths relative to the script's location
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_KEY_PATH = os.path.join(SCRIPT_DIR, "data", "keys", "id_ed25519")
 
@@ -24,65 +23,65 @@ def wait_for_port(host, port, timeout=60):
     while time.time() - start < timeout:
         try:
             with socket.create_connection((host, port), timeout=5) as sock:
-                # QEMU opens the port immediately, but the guest OS might not be ready.
-                # We must wait until the actual SSH daemon sends its banner.
                 sock.settimeout(5)
                 banner = sock.recv(1024)
                 if b"SSH" in banner:
                     print(f"[+] SSH service at {port} is open and ready!")
                     return True
-                elif banner == b"":
-                    # Connection closed immediately by peer (e.g. Dropbear crashing due to missing host keys)
-                    pass
-                else:
-                    print(f"[*] Received non-SSH data: {banner}")
         except (socket.timeout, ConnectionRefusedError, OSError, ConnectionResetError):
             pass
         time.sleep(1)
     print("[-] Timeout waiting for SSH service.")
     return False
 
-def inject_unlock_payload():
+def inject_unlock_payload(key_path):
     cmd = (
         f"for f in /lib/cryptsetup/passfifo /run/cryptsetup/passfifo; do "
         f"[ -p \"$f\" ] && printf \"%s\" \"{PASS}\" > \"$f\" && exit 0; "
         f"done; exit 1"
     )
     
-    # Isolate SSH execution from host's ssh-agent and ~/.ssh/config
     env = os.environ.copy()
     env.pop("SSH_AUTH_SOCK", None)
     
     ssh_cmd = [
         "ssh",
-        "-F", "/dev/null", # Completely ignore user's ~/.ssh/config
-        "-i", KEY_PATH,
+        "-F", "/dev/null",
+        "-i", key_path,
         "-p", str(SSH_PORT),
         "-o", "StrictHostKeyChecking=no",
         "-o", "UserKnownHostsFile=/dev/null",
         "-o", "IdentitiesOnly=yes",
-        "-o", "BatchMode=yes", # Fail immediately if passphrase or interaction is required
+        "-o", "BatchMode=yes",
         "-o", "ConnectTimeout=5",
         f"root@{SSH_HOST}",
         cmd
     ]
     
-    print(f"[*] Sending unlock payload over SSH to {SSH_HOST}:{SSH_PORT}...")
+    print(f"[*] Sending unlock payload over SSH using key {os.basename(key_path)}...")
     res = subprocess.run(ssh_cmd, capture_output=True, text=True, env=env)
     
     if res.returncode == 0:
         print("[+] Payload successfully delivered to passfifo!")
         return True
     else:
-        print(f"[-] Failed to execute remote unlock command: {res.stderr}")
+        print(f"[-] Failed: {res.stderr.strip()}")
         return False
 
 if __name__ == "__main__":
     if not wait_for_port(SSH_HOST, SSH_PORT, timeout=60):
         sys.exit(1)
     time.sleep(1)
-    if inject_unlock_payload():
+    
+    print("[*] Attempting unlock with Ed25519 key...")
+    if inject_unlock_payload(KEY_PATH):
         print("[*] Unlock command finished successfully.")
         sys.exit(0)
-    else:
-        sys.exit(1)
+        
+    print("[*] Ed25519 failed. Attempting fallback to RSA key...")
+    rsa_path = KEY_PATH.replace("id_ed25519", "id_rsa")
+    if os.path.exists(rsa_path) and inject_unlock_payload(rsa_path):
+        print("[*] Unlock command finished successfully with RSA.")
+        sys.exit(0)
+        
+    sys.exit(1)
