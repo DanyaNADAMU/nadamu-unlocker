@@ -8,9 +8,9 @@ import time
 import socket
 import subprocess
 
-SSH_HOST = sys.argv[1] if len(sys.argv) > 1 else "nadamu-unlocker-lab"
-SSH_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 2222
-KEY_PATH = sys.argv[3] if len(sys.argv) > 3 else "/opt/data/projects/nadamu-unlocker/lab/data/keys/id_ed25519"
+SSH_HOST = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
+SSH_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 22
+KEY_PATH = sys.argv[3] if len(sys.argv) > 3 else "data/keys/id_ed25519"
 PASS = sys.argv[4] if len(sys.argv) > 4 else "password"
 
 def wait_for_port(host, port, timeout=60):
