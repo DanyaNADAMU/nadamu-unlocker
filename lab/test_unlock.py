@@ -11,7 +11,7 @@ import subprocess
 
 # Resolve paths relative to the script's location
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_KEY_PATH = os.path.join(SCRIPT_DIR, "data", "keys", "id_rsa")
+DEFAULT_KEY_PATH = os.path.join(SCRIPT_DIR, "data", "keys", "id_ed25519")
 
 SSH_HOST = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
 SSH_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 2222
@@ -48,8 +48,14 @@ def inject_unlock_payload():
         f"[ -p \"$f\" ] && printf \"%s\" \"{PASS}\" > \"$f\" && exit 0; "
         f"done; exit 1"
     )
+    
+    # Isolate SSH execution from host's ssh-agent and ~/.ssh/config
+    env = os.environ.copy()
+    env.pop("SSH_AUTH_SOCK", None)
+    
     ssh_cmd = [
         "ssh",
+        "-F", "/dev/null", # Completely ignore user's ~/.ssh/config
         "-i", KEY_PATH,
         "-p", str(SSH_PORT),
         "-o", "StrictHostKeyChecking=no",
@@ -59,8 +65,10 @@ def inject_unlock_payload():
         f"root@{SSH_HOST}",
         cmd
     ]
+    
     print(f"[*] Sending unlock payload over SSH to {SSH_HOST}:{SSH_PORT}...")
-    res = subprocess.run(ssh_cmd, capture_output=True, text=True)
+    res = subprocess.run(ssh_cmd, capture_output=True, text=True, env=env)
+    
     if res.returncode == 0:
         print("[+] Payload successfully delivered to passfifo!")
         return True

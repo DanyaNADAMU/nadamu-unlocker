@@ -9,13 +9,13 @@ mkdir -p "${DATA_DIR}" "${KEYS_DIR}"
 
 echo "=== [NADAMU LAB INITIALIZATION (KALI STANDARD UPDATE-INITRAMFS)] ==="
 
-# 1. Generate SSH key pair for test client if missing (using RSA for max compatibility)
-if [ ! -f "${KEYS_DIR}/id_rsa" ]; then
-    echo "[*] 1. Generating test SSH keys (rsa)..."
-    ssh-keygen -t rsa -b 2048 -N "" -f "${KEYS_DIR}/id_rsa" -C "nadamu-test-client"
+# 1. Generate SSH key pair for test client if missing (using Ed25519 as the modern standard)
+if [ ! -f "${KEYS_DIR}/id_ed25519" ]; then
+    echo "[*] 1. Generating test SSH keys (ed25519)..."
+    ssh-keygen -t ed25519 -N "" -f "${KEYS_DIR}/id_ed25519" -C "nadamu-test-client"
 fi
 
-PUBKEY_CONTENT=$(cat "${KEYS_DIR}/id_rsa.pub")
+PUBKEY_CONTENT=$(cat "${KEYS_DIR}/id_ed25519.pub")
 
 # 2. Create raw test disk image (500MB sparse) if missing
 if [ ! -f "${DATA_DIR}/test_disk.img" ]; then
