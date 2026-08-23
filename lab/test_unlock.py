@@ -61,6 +61,7 @@ def inject_unlock_payload():
         "-o", "StrictHostKeyChecking=no",
         "-o", "UserKnownHostsFile=/dev/null",
         "-o", "IdentitiesOnly=yes",
+        "-o", "BatchMode=yes", # Fail immediately if passphrase or interaction is required
         "-o", "ConnectTimeout=5",
         f"root@{SSH_HOST}",
         cmd
