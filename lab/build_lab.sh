@@ -40,15 +40,16 @@ cp -f "/boot/vmlinuz-${KERNEL_VER}" "${DATA_DIR}/vmlinuz"
 # 4. Configure standard Kali initramfs-tools & dropbear-initramfs
 echo "[*] 5. Configuring official dropbear-initramfs and hooks..."
 
-# Enable dropbear in initramfs explicitly
+# Enable dropbear in initramfs explicitly (must be before update-initramfs)
 echo "DROPBEAR=y" >> /etc/initramfs-tools/initramfs.conf
 
-# Verify dropbear hook exists
+# Verify dropbear hook exists and is executable
 if [ ! -f /usr/share/initramfs-tools/hooks/dropbear ]; then
     echo "[-] ERROR: dropbear hook not found at /usr/share/initramfs-tools/hooks/dropbear"
     echo "[-] dropbear-initramfs package may not be installed correctly"
     exit 1
 fi
+chmod +x /usr/share/initramfs-tools/hooks/dropbear
 echo "[*] Found dropbear hook: /usr/share/initramfs-tools/hooks/dropbear"
 
 # Generate dropbear host keys in standard location for dropbear-initramfs hook
@@ -171,8 +172,50 @@ else
     echo "[!] WARNING: dropbear hook may not have run - check /tmp/initramfs-build.log"
 fi
 
+# 7. Verify initramfs contains dropbear components
+echo "[*] 7. Verifying initramfs contents..."
+INITRD_PATH="/boot/initrd.img-${KERNEL_VER}"
+TMPDIR=$(mktemp -d)
+cd "${TMPDIR}"
+zcat "${INITRD_PATH}" | cpio -idmv 2>&1 | tee /tmp/initramfs-contents.log
+
+# Check for critical dropbear files
+echo "[*] Checking for dropbear binary..."
+if [ -f "${TMPDIR}/sbin/dropbear" ] || [ -f "${TMPDIR}/usr/sbin/dropbear" ] || [ -f "${TMPDIR}/bin/dropbear" ]; then
+    echo "[+] dropbear binary found in initramfs"
+else
+    echo "[-] ERROR: dropbear binary NOT found in initramfs!"
+    echo "[-] Contents of initramfs:"
+    find "${TMPDIR}" -type f | sort
+fi
+
+echo "[*] Checking for dropbear host keys..."
+if [ -f "${TMPDIR}/etc/dropbear/dropbear_rsa_host_key" ] || [ -f "${TMPDIR}/etc/dropbear/dropbear_ecdsa_host_key" ] || [ -f "${TMPDIR}/etc/dropbear/dropbear_ed25519_host_key" ]; then
+    echo "[+] dropbear host keys found in initramfs"
+else
+    echo "[-] ERROR: dropbear host keys NOT found in initramfs!"
+fi
+
+echo "[*] Checking for authorized_keys..."
+if [ -f "${TMPDIR}/etc/dropbear/authorized_keys" ] || [ -f "${TMPDIR}/root/.ssh/authorized_keys" ]; then
+    echo "[+] authorized_keys found in initramfs"
+else
+    echo "[-] ERROR: authorized_keys NOT found in initramfs!"
+fi
+
+echo "[*] Checking for dropbear startup script..."
+if [ -f "${TMPDIR}/scripts/init-premount/dropbear" ] || [ -f "${TMPDIR}/scripts/local-top/dropbear" ]; then
+    echo "[+] dropbear startup script found in initramfs"
+else
+    echo "[-] ERROR: dropbear startup script NOT found in initramfs!"
+fi
+
+# Cleanup
+cd /
+rm -rf "${TMPDIR}"
+
 # Copy the generated initramfs to data directory
 cp -f "/boot/initrd.img-${KERNEL_VER}" "${DATA_DIR}/test_initrd.img"
 
-echo "[*] 7. Lab assets built successfully in ${DATA_DIR}"
+echo "[*] 8. Lab assets built successfully in ${DATA_DIR}"
 ls -lh "${DATA_DIR}"
