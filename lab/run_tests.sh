@@ -5,14 +5,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "=== [NADAMU LAB: LOCAL TEST RUN] ==="
 
-# Trigger VM restart so test runs against a clean fresh boot
-touch "${SCRIPT_DIR}/data/cmd.restart" 2>/dev/null || true
+# Restart container to ensure a fresh, unhalted VM instance is running
+podman restart nadamu-unlocker-lab >/dev/null 2>&1 || docker restart nadamu-unlocker-lab >/dev/null 2>&1 || true
 
-# 1. Check container logs
-echo "[*] Container logs (last 20 lines):"
-docker logs nadamu-unlocker-lab --tail 20 2>/dev/null || podman logs nadamu-unlocker-lab --tail 20 2>/dev/null || true
-
-echo ""
-# 2. Run the python test script
+# 1. Run the python test script
 echo "[*] Executing test_unlock.py..."
 python3 "${SCRIPT_DIR}/test_unlock.py"

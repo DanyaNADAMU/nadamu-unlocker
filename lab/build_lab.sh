@@ -154,7 +154,7 @@ mkdir -p /lib/cryptsetup
 [ -p /lib/cryptsetup/passfifo ] || mkfifo /lib/cryptsetup/passfifo
 
 echo "=========================================="
-echo "    NADAMU LUKS UNLOCK READY"
+echo "    NADAMU LUKS UNREADY"
 echo "=========================================="
 echo "[*] Debug: Checking Dropbear authorized_keys in initramfs:"
 ls -ld /root || echo "No /root"
@@ -163,7 +163,7 @@ ls -l /root/.ssh/authorized_keys || echo "No authorized_keys"
 
 echo "[*] Waiting for passphrase on /lib/cryptsetup/passfifo..."
 
-while [ ! -b /dev/mapper/test_crypt ]; do
+while true; do
     if [ -p /lib/cryptsetup/passfifo ]; then
         PASS=$(cat /lib/cryptsetup/passfifo 2>/dev/null)
         if [ -n "$PASS" ]; then
@@ -171,10 +171,10 @@ while [ ! -b /dev/mapper/test_crypt ]; do
             printf "%s" "$PASS" | cryptsetup open --type luks /dev/vda test_crypt -
             if [ -b /dev/mapper/test_crypt ]; then
                 echo "[+] LUKS device test_crypt opened successfully!"
-                if ! blkid /dev/mapper/test_crypt | grep -q ext4; then
-                    mke2fs -t ext4 -F /dev/mapper/test_crypt >/dev/null 2>&1
-                fi
-                break
+                sleep 2
+                echo "[+] Test finished successfully. Shutting down VM..."
+                poweroff -f || reboot -f
+                exit 0
             else
                 echo "[-] Invalid passphrase, waiting again..."
             fi
