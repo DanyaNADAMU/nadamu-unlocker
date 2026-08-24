@@ -6,7 +6,6 @@ Connects via SSH to Dropbear inside initramfs and unlocks LUKS via passfifo.
 import os
 import sys
 import time
-import socket
 import subprocess
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -17,21 +16,35 @@ SSH_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 2222
 KEY_PATH = sys.argv[3] if len(sys.argv) > 3 else DEFAULT_KEY_PATH
 PASS = sys.argv[4] if len(sys.argv) > 4 else "password"
 
-def wait_for_port(host, port, timeout=60):
-    print(f"[*] Waiting for SSH service at {host}:{port}...")
+def wait_for_ssh(host, port, key_path, timeout=60):
+    print(f"[*] Waiting for SSH service at {host}:{port}...", end="", flush=True)
     start = time.time()
+    
+    probe_cmd = [
+        "ssh",
+        "-F", "/dev/null",
+        "-o", "IdentityAgent=none",
+        "-o", "IdentitiesOnly=yes",
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "UserKnownHostsFile=/dev/null",
+        "-o", "LogLevel=QUIET",
+        "-o", "ConnectTimeout=2",
+        "-o", "BatchMode=yes",
+        "-i", key_path,
+        "-p", str(port),
+        f"root@{host}",
+        "exit 0"
+    ]
+    
     while time.time() - start < timeout:
-        try:
-            with socket.create_connection((host, port), timeout=5) as sock:
-                sock.settimeout(5)
-                banner = sock.recv(1024)
-                if b"SSH" in banner:
-                    print(f"[+] SSH service at {port} is open and ready!")
-                    return True
-        except (socket.timeout, ConnectionRefusedError, OSError, ConnectionResetError):
-            pass
+        res = subprocess.run(probe_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if res.returncode == 0:
+            print(" [READY]")
+            return True
+        print(".", end="", flush=True)
         time.sleep(1)
-    print("[-] Timeout waiting for SSH service.")
+        
+    print("\n[-] Timeout waiting for SSH service.")
     return False
 
 def inject_unlock_payload(key_path):
@@ -52,16 +65,17 @@ def inject_unlock_payload(key_path):
     ssh_cmd = [
         "ssh",
         "-F", "/dev/null",
-        "-i", key_path,
-        "-p", str(SSH_PORT),
+        "-o", "IdentityAgent=none",
+        "-o", "IdentitiesOnly=yes",
         "-o", "StrictHostKeyChecking=no",
         "-o", "UserKnownHostsFile=/dev/null",
-        "-o", "IdentitiesOnly=yes",
         "-o", "BatchMode=yes",
         "-o", "PasswordAuthentication=no",
         "-o", "KbdInteractiveAuthentication=no",
         "-o", "PubkeyAuthentication=yes",
         "-o", "ConnectTimeout=5",
+        "-i", key_path,
+        "-p", str(SSH_PORT),
         f"root@{SSH_HOST}",
         cmd
     ]
@@ -77,9 +91,12 @@ def inject_unlock_payload(key_path):
         return False
 
 if __name__ == "__main__":
-    if not wait_for_port(SSH_HOST, SSH_PORT, timeout=60):
+    if not os.path.exists(KEY_PATH):
+        print(f"[-] ERROR: SSH key not found at {KEY_PATH}")
         sys.exit(1)
-    time.sleep(1)
+
+    if not wait_for_ssh(SSH_HOST, SSH_PORT, KEY_PATH, timeout=60):
+        sys.exit(1)
     
     print("[*] Attempting unlock with Ed25519 key...")
     if inject_unlock_payload(KEY_PATH):
