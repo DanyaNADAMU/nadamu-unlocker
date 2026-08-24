@@ -1,3 +1,0 @@
-docker compose -f lab/compose.yml down && docker compose -f lab/compose.yml up --build -d
-# подождите появления "NADAMU LUKS UNLOCK READY" в логах
-python lab/test_unlock.py

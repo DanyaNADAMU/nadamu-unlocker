@@ -1,2 +1,0 @@
-touch lab/data/cmd.rebuild
-docker compose restart

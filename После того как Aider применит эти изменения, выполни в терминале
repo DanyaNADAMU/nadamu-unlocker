@@ -1,2 +1,0 @@
-rm lab/data/test_initrd.img
-docker compose restart

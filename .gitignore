@@ -25,3 +25,4 @@ lab/data/
 *.id_ed25519
 *.id_rsa
 !laptop/config/dropbear/authorized_keys.example
+.aider*

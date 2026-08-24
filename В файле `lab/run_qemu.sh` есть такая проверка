@@ -1,1 +1,0 @@
-if qemu-system-x86_64 -enable-kvm -machine accel=kvm -display none -vga none 2>&1 | grep -iq "failed to initialize kvm\|permission denied"; then
