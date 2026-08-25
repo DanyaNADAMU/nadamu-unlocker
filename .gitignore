@@ -29,3 +29,6 @@ lab/data/
 
 # Local agent-canvas integration (machine-specific)
 lab/compose.override.yml
+
+# Agent memory
+.openhands/

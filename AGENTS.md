@@ -1,0 +1,86 @@
+# AGENTS.md
+
+Instructions for AI agents (and humans) working in this repository.
+
+## What this project is
+
+**nadamu-unlocker** unlocks a LUKS-encrypted laptop from an Android phone.
+The laptop runs a Dropbear SSH server inside its *initramfs*; the phone
+connects over the network and injects the disk passphrase into
+`/lib/cryptsetup/passfifo` via SSH.
+
+Key constraint that shapes everything: code that runs at boot lives in the
+**unencrypted initramfs image**, so it is minimal, must not depend on system
+services, and any secret baked into it is considered readable by anyone with
+the laptop.
+
+## Repository map
+
+```
+android/    Android app (Kotlin, Compose, SSHJ). Discovers laptop, sends passphrase.
+laptop/     What gets installed on the target laptop: initramfs hooks + unlock CLI.
+lab/        QEMU-based test lab in Docker: builds a real initramfs and tests unlocking end-to-end.
+docs/       Cross-component contracts, architecture decisions (ADR), network mode matrix.
+.github/    CI: Android debug APK build on push/PR to main.
+```
+
+## Documentation map — read only what you need
+
+| Question | Document |
+|---|---|
+| How do the app and initramfs talk? Protocol details | `docs/unlock-flow.md` |
+| Which network topologies are supported / planned? | `docs/network-modes.md` |
+| Why Wi-Fi and not Bluetooth in initramfs? | `docs/adr/0001-wifi-not-bluetooth-in-initramfs.md` |
+| Why both reverse SSH and WireGuard for remote unlock? | `docs/adr/0002-dual-transport-revssh-plus-wireguard.md` |
+| Why passfifo instead of other unlock mechanisms? | `docs/adr/0003-luks-unlock-via-passfifo.md` |
+| How to build/run/test one component? | `README.md` inside that component's directory |
+
+## Commands
+
+```sh
+# Lab (QEMU + LUKS end-to-end test), requires podman or docker with /dev/kvm
+cd lab && docker compose up -d          # build lab assets + start VM container
+cd lab && ./run_tests.sh                # run automated unlock test against running VM
+cd lab && ./ssh_lab.sh                  # interactive shell into the VM's initramfs
+
+# Android build (JDK 17)
+cd android && gradle assembleDebug      # CI does the same; output in app/build/outputs/apk/
+```
+
+## Conventions
+
+- Docs are in **English**. Keep them English even if conversation is not.
+- Every doc starts with a 2–5 line TL;DR. One document answers one question.
+- Facts live in exactly **one** place; everywhere else links to it.
+- Status markers: `[implemented]`, `[planned]`, `[broken]`,
+  `Verified: YYYY-MM-DD` (date the claim was last confirmed by a test).
+- Shell snippets must be copy-pasteable from repo root unless noted otherwise.
+
+## Doc maintenance rules (mandatory)
+
+Update documentation **in the same change** as the code:
+
+1. Changed anything about the unlock protocol (passfifo paths, success
+   criteria, key formats, ports) → update `docs/unlock-flow.md`.
+2. Changed network topology support or added a mode → update
+   `docs/network-modes.md` matrix row.
+3. Made an architectural choice where alternatives were rejected → add
+   `docs/adr/NNNN-short-name.md`. ADRs are immutable; supersede, don't edit.
+4. Changed build/run/test steps of a component → update that component's
+   `README.md`.
+5. If you could not verify a documented claim by running it, mark it
+   `Verified: never` instead of leaving it unmarked.
+
+## Known deviations from docs / current bugs
+
+Keep this list honest; remove entries when fixed.
+
+- `SshUnlocker` reports SUCCESS when the passphrase was written to the fifo,
+  without confirming the volume actually opened (violates contract in
+  `docs/unlock-flow.md`). Fix planned as part of mode A2 work.
+- `KeyManager` publishes the public key in X.509/SPKI base64 format which is
+  NOT a valid OpenSSH authorized_keys entry; dropbear will reject it.
+- `SshUnlocker` has a dead password-auth fallback (`root`/`root`) that can
+  never succeed because dropbear runs with `-s` (password auth disabled).
+- `NetworkScanner` assumes a /24 subnet regardless of the interface's actual
+  prefix length.
