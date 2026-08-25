@@ -21,3 +21,8 @@ services:
     cpus: 1.0
     environment:
       - LUKS_PASSWORD=password
+    networks:
+      - proxy_net
+networks:
+  proxy_net:
+    external: true
