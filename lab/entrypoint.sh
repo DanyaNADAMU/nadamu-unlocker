@@ -12,8 +12,9 @@ RUN_SCRIPT="/lab/run_qemu.sh"
 
 echo "=== [NADAMU LAB INITIALIZATION] ==="
 
-# Build disk and initrd if not existing
-if [ ! -f "${DATA_DIR}/test_disk.img" ] || [ ! -f "${DATA_DIR}/test_initrd.img" ] || [ -f "${DATA_DIR}/cmd.rebuild" ]; then
+# Build disk and initrd if not existing (cmd.rekey also forces a rebuild so
+# the new pubkey gets baked into the initramfs)
+if [ ! -f "${DATA_DIR}/test_disk.img" ] || [ ! -f "${DATA_DIR}/test_initrd.img" ] || [ -f "${DATA_DIR}/cmd.rebuild" ] || [ -f "${DATA_DIR}/cmd.rekey" ]; then
     echo "[*] Building lab assets..."
     rm -f "${DATA_DIR}/cmd.rebuild"
     sh "${BUILD_SCRIPT}"

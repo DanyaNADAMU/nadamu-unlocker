@@ -9,14 +9,30 @@ mkdir -p "${DATA_DIR}" "${KEYS_DIR}"
 
 echo "=== [NADAMU LAB INITIALIZATION (KALI STANDARD UPDATE-INITRAMFS)] ==="
 
-# 1. Generate Ed25519 key
-echo "[*] 1. Generating fresh test SSH key (Ed25519)..."
-rm -f "${KEYS_DIR}/id_ed25519"*
+# 1. Generate Ed25519 key (only if missing; survives rebuilds so baked-in
+#    authorized_keys and external SSH clients stay valid. Force rotation
+#    with: touch ${DATA_DIR}/cmd.rekey)
+if [ -f "${DATA_DIR}/cmd.rekey" ]; then
+    echo "[*] 1. Rekey requested, rotating Ed25519 key..."
+    rm -f "${DATA_DIR}/cmd.rekey"
+    rm -f "${KEYS_DIR}/id_ed25519"*
+fi
 
-# Force empty passphrase with -N "" and quiet mode
-ssh-keygen -q -t ed25519 -N "" -f "${KEYS_DIR}/id_ed25519" -C "nadamu-test-ed25519"
+if [ -f "${KEYS_DIR}/id_ed25519" ] && [ -f "${KEYS_DIR}/id_ed25519.pub" ]; then
+    echo "[*] 1. Reusing existing Ed25519 key (${KEYS_DIR}/id_ed25519)"
+else
+    echo "[*] 1. Generating fresh test SSH key (Ed25519)..."
+    # Force empty passphrase with -N "" and quiet mode
+    ssh-keygen -q -t ed25519 -N "" -f "${KEYS_DIR}/id_ed25519" -C "nadamu-test-ed25519"
+fi
 
-# Explicitly set permissions on the host side so SSH client doesn't complain
+# Explicitly set permissions on the host side so SSH client doesn't complain.
+# Owner is inherited from the data dir so that bind-mount consumers (e.g. an
+# agent sandbox with its own uid mapping) can actually read the private key;
+# container root stays able to read regardless via CAP_DAC_OVERRIDE.
+KEY_UID="$(stat -c %u "${DATA_DIR}" 2>/dev/null || echo 0)"
+KEY_GID="$(stat -c %g "${DATA_DIR}" 2>/dev/null || echo 0)"
+chown "${KEY_UID}:${KEY_GID}" "${KEYS_DIR}/id_ed25519" "${KEYS_DIR}/id_ed25519.pub" 2>/dev/null || true
 chmod 0600 "${KEYS_DIR}/id_ed25519"
 chmod 0644 "${KEYS_DIR}/id_ed25519.pub"
 
