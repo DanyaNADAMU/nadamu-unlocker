@@ -22,7 +22,9 @@ else
     KVM_FLAG="-machine q35,accel=tcg"
 fi
 
-echo "[*] Launching QEMU VM..."
+echo "[*] Launching QEMU VM (console mirrored to /lab/data/console.log)..."
+# tee the serial console into a shared log so external agents can read VM state
+# without access to container stdout. Line-buffered via stdbuf.
 exec qemu-system-x86_64 \
     $KVM_FLAG \
     -m 512M \
@@ -35,4 +37,5 @@ exec qemu-system-x86_64 \
     -netdev user,id=net0,hostfwd=tcp::22-:22 \
     -device virtio-net-pci,netdev=net0 \
     -append "console=ttyS0 root=/dev/mapper/test_crypt cryptopts=target=test_crypt,source=/dev/vda,lvm=none ip=dhcp boot=local panic=1 reboot=t" \
-    -serial mon:stdio
+    -serial mon:stdio 2>&1 | stdbuf -oL tee -a /lab/data/console.log
+exit ${PIPESTATUS:-}

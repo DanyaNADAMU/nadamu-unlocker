@@ -26,3 +26,6 @@ lab/data/
 *.id_rsa
 !laptop/config/dropbear/authorized_keys.example
 .aider*
+
+# Local agent-canvas integration (machine-specific)
+lab/compose.override.yml
