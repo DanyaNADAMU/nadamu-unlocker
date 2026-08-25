@@ -41,8 +41,8 @@ while true; do
     
     # Monitor QEMU process and restart triggers
     while kill -0 $QEMU_PID 2>/dev/null; do
-        if [ -f "${DATA_DIR}/cmd.rebuild" ] || [ -f "${DATA_DIR}/cmd.restart" ]; then
-            echo "[*] Restart/Rebuild trigger detected. Stopping QEMU PID $QEMU_PID..."
+        if [ -f "${DATA_DIR}/cmd.rebuild" ] || [ -f "${DATA_DIR}/cmd.restart" ] || [ -f "${DATA_DIR}/cmd.rekey" ]; then
+            echo "[*] Restart/Rebuild/Rekey trigger detected. Stopping QEMU PID $QEMU_PID..."
             rm -f "${DATA_DIR}/cmd.restart"
             kill -- -"$QEMU_PID" 2>/dev/null || true
             pkill -f qemu-system-x86_64 2>/dev/null || true
