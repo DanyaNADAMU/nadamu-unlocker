@@ -17,7 +17,7 @@ echo "=== [NADAMU LAB INITIALIZATION] ==="
 if [ ! -f "${DATA_DIR}/test_disk.img" ] || [ ! -f "${DATA_DIR}/test_initrd.img" ] || [ -f "${DATA_DIR}/cmd.rebuild" ] || [ -f "${DATA_DIR}/cmd.rekey" ]; then
     echo "[*] Building lab assets..."
     rm -f "${DATA_DIR}/cmd.rebuild"
-    sh "${BUILD_SCRIPT}"
+    sh "${BUILD_SCRIPT}" || true
 fi
 
 # Supervisor loop for continuous test execution
@@ -25,10 +25,11 @@ LOOP_COUNT=0
 while true; do
     LOOP_COUNT=$((LOOP_COUNT + 1))
     
-    # Check for rebuild / restart trigger
-    if [ -f "${DATA_DIR}/cmd.rebuild" ]; then
+    # Check for rebuild / rekey trigger (rekey rotates the SSH key and
+    # rebuilds so the new pubkey is baked into the initramfs)
+    if [ -f "${DATA_DIR}/cmd.rebuild" ] || [ -f "${DATA_DIR}/cmd.rekey" ]; then
         echo "[*] Rebuild trigger detected. Rebuilding test initrd..."
-        rm -f "${DATA_DIR}/cmd.rebuild"
+        rm -f "${DATA_DIR}/cmd.rebuild" "${DATA_DIR}/cmd.rekey"
         sh "${BUILD_SCRIPT}" || true
     fi
     
