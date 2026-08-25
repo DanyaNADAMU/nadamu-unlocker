@@ -71,6 +71,17 @@ Update documentation **in the same change** as the code:
 5. If you could not verify a documented claim by running it, mark it
    `Verified: never` instead of leaving it unmarked.
 
+These rules are **enforced** by `scripts/check_docs.py`
+(`.github/workflows/docs-check.yml` runs it on every PR): if trigger code
+paths change without their docs in the same diff, CI fails. If a code change
+genuinely has no doc impact, add `[docs-ok]` to one commit message to bypass.
+Run locally before pushing:
+
+```sh
+python3 scripts/check_docs.py                        # hygiene only (links, Verified)
+python3 scripts/check_docs.py --base origin/main     # + trigger rules vs main
+```
+
 ## Known deviations from docs / current bugs
 
 Keep this list honest; remove entries when fixed.
