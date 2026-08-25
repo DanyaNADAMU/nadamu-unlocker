@@ -5,7 +5,7 @@
 > initrd by the lab or installer). If you change anything here, you are
 > changing BOTH sides — update this file in the same commit.
 >
-> Verified: never (contract extracted from code, not yet enforced by tests)
+> Verified: 2026-08-25 (contract extracted from code; fifo write + VM poweroff verified by lab test_unlock.py. Mapper-poll client behavior NOT yet verified — see Known deviations)
 
 ## TL;DR
 

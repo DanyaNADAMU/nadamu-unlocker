@@ -31,6 +31,9 @@ Full matrix with requirements and test coverage:
 | B1 | Remote via VPS, reverse SSH tunnel from laptop | [planned] — next after A2 |
 | B2 | Remote via VPS, WireGuard mesh | [planned], after B1 |
 
+Verified: 2026-08-25 — A1 flow exercised end-to-end by `lab/test_unlock.py`
+(SSH into initramfs dropbear, passfifo write, VM powers off after unlock).
+
 ## Repository layout
 
 ```

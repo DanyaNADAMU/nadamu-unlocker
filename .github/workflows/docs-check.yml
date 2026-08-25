@@ -1,0 +1,30 @@
+name: Docs Check
+
+on:
+  pull_request:
+    branches: ["main"]
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  docs-lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout (full history for diff against base)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run documentation linter
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="origin/${{ github.base_ref }}"
+            git fetch --quiet origin "${{ github.base_ref }}"
+            python3 scripts/check_docs.py --base "$BASE"
+          else
+            # On main pushes there is no PR diff to compare; hygiene only.
+            python3 scripts/check_docs.py
+          fi
