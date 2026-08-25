@@ -69,3 +69,7 @@ docker compose up -d      # builds initramfs + LUKS disk, boots QEMU VM
 
 See [`AGENTS.md`](AGENTS.md) for the full documentation map and the rules
 this repository follows for keeping docs current.
+
+## Test
+
+Webhook e2e validation marker. Safe to close PR without merging.
