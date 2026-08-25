@@ -32,7 +32,10 @@ while true; do
     fi
     
     echo "[*] Launching QEMU instance (Run #${LOOP_COUNT})..."
-    sh "${RUN_SCRIPT}" &
+    # setsid gives the script its own process group so we can kill QEMU AND
+    # its pipeline children (tee) with one signal. Killing just $! orphans
+    # qemu (it keeps :22 bound -> next run dies with EADDRINUSE).
+    setsid sh "${RUN_SCRIPT}" &
     QEMU_PID=$!
     
     # Monitor QEMU process and restart triggers
@@ -40,7 +43,7 @@ while true; do
         if [ -f "${DATA_DIR}/cmd.rebuild" ] || [ -f "${DATA_DIR}/cmd.restart" ]; then
             echo "[*] Restart/Rebuild trigger detected. Stopping QEMU PID $QEMU_PID..."
             rm -f "${DATA_DIR}/cmd.restart"
-            kill $QEMU_PID 2>/dev/null || true
+            kill -- -"$QEMU_PID" 2>/dev/null || true
             pkill -f qemu-system-x86_64 2>/dev/null || true
             break
         fi
