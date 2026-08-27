@@ -20,8 +20,44 @@ data class DiscoveredDevice(
 
 class NetworkScanner {
 
+    companion object {
+        /**
+         * Pure function to calculate candidate host IPs within an IPv4 CIDR subnet.
+         * Handles prefix lengths (/16, /24, /28, /30, etc.) capped to maxHosts.
+         */
+        fun calculateSubnetIps(
+            address: Inet4Address,
+            prefixLength: Short,
+            maxHosts: Int = 254
+        ): List<String> {
+            val addrBytes = address.address
+            val ipInt = ((addrBytes[0].toInt() and 0xFF) shl 24) or
+                    ((addrBytes[1].toInt() and 0xFF) shl 16) or
+                    ((addrBytes[2].toInt() and 0xFF) shl 8) or
+                    (addrBytes[3].toInt() and 0xFF)
+
+            val prefix = prefixLength.toInt().coerceIn(1, 30)
+            val mask = if (prefix == 0) 0 else (-1 shl (32 - prefix))
+            val netInt = ipInt and mask
+            val hostBits = 32 - prefix
+            val totalHosts = if (hostBits >= 31) maxHosts else ((1 shl hostBits) - 2).coerceAtLeast(0)
+
+            if (totalHosts <= 0) return emptyList()
+
+            val count = minOf(totalHosts, maxHosts)
+            val result = ArrayList<String>(count)
+
+            for (i in 1..count) {
+                val hostInt = netInt + i
+                val ipStr = "${(hostInt ushr 24) and 0xFF}.${(hostInt ushr 16) and 0xFF}.${(hostInt ushr 8) and 0xFF}.${hostInt and 0xFF}"
+                result.add(ipStr)
+            }
+            return result
+        }
+    }
+
     /**
-     * Find active USB tethering / RNDIS / Ethernet interfaces.
+     * Find active USB tethering / RNDIS / Ethernet / WLAN interfaces.
      */
     fun getTetheringInterfaces(): List<NetworkInterface> {
         val tetheringPrefixes = listOf("rndis", "usb", "ncm", "eth", "wlan")
@@ -44,7 +80,7 @@ class NetworkScanner {
     }
 
     /**
-     * Scan network prefix (subnet /24) concurrently for port 22 dropbear.
+     * Scan network prefix for interface concurrently for port 22 dropbear.
      */
     suspend fun scanSubnetForLuks(targetInterface: NetworkInterface? = null): List<DiscoveredDevice> =
         withContext(Dispatchers.IO) {
@@ -55,12 +91,11 @@ class NetworkScanner {
             val ipv4Addr = interfaceAddresses.firstOrNull { it.address is Inet4Address }
                 ?: return@withContext emptyList()
 
-            val hostAddress = ipv4Addr.address.hostAddress ?: return@withContext emptyList()
-            val subnetPrefix = hostAddress.substringBeforeLast(".")
+            val inet4 = ipv4Addr.address as Inet4Address
+            val prefixLength = ipv4Addr.networkPrefixLength
+            val ipList = calculateSubnetIps(inet4, prefixLength)
 
-            // Concurrently probe all 254 addresses in subnet
-            val deferred = (1..254).map { i ->
-                val ip = "$subnetPrefix.$i"
+            val deferred = ipList.map { ip ->
                 async {
                     probeHost(ip, iface.name)
                 }

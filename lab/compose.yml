@@ -22,7 +22,7 @@ services:
     environment:
       - LUKS_PASSWORD=password
     networks:
-      - proxy_net
+      - agent_net
 networks:
-  proxy_net:
+  agent_net:
     external: true

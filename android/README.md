@@ -11,35 +11,40 @@ Jetpack Compose UI, SSHJ for SSH, subnet scanner for discovery. Talks the
 protocol documented in `../docs/unlock-flow.md`. Currently targets mode A1;
 mode A2 work includes fixing the known protocol deviations listed there.
 
-## Build
+## Build & Test
 
 JDK 17 required.
 
 ```sh
 cd android
+gradle test                 # Run unit tests (KeyManagerTest, NetworkScannerTest, SshUnlockerTest)
 gradle assembleDebug        # APK: app/build/outputs/apk/debug/
 ```
 
-CI builds this on every push/PR to main
+CI runs unit tests and builds the debug APK on every push/PR to main
 (`.github/workflows/android-build.yml`) and uploads the debug APK as an
 artifact.
 
 ## Code map
 
 ```
-app/src/main/java/mu/nada/unlocker/
-├── MainActivity.kt      # Compose UI: password field, scan button, unlock button, console log
-├── data/
-│   ├── KeyManager.kt    # client identity key + saved passphrase storage (SharedPreferences)
-│   └── NetworkScanner.kt# interface enumeration + /24 TCP-probe scan for dropbear banner
-└── ssh/
-    └── SshUnlocker.kt   # SSHJ client: connect, write passfifo, report result
+app/src/
+├── main/java/mu/nada/unlocker/
+│   ├── MainActivity.kt      # Compose UI: password field, scan button, unlock button, console log
+│   ├── data/
+│   │   ├── KeyManager.kt    # Ed25519 identity key generation (OpenSSH wire format) + passphrase storage
+│   │   └── NetworkScanner.kt# CIDR prefix calculation + TCP probe for dropbear banner
+│   └── ssh/
+│       └── SshUnlocker.kt   # SSHJ client: pubkey auth, write passfifo, poll /dev/mapper/<target>
+└── test/java/mu/nada/unlocker/
+    ├── data/
+    │   ├── KeyManagerTest.kt
+    │   └── NetworkScannerTest.kt
+    └── ssh/
+        └── SshUnlockerTest.kt
 ```
 
 ## Component-specific TODOs
-
-See "Known deviations" in `../docs/unlock-flow.md` — all four are in this
-directory. Additionally:
 
 - Private key lives in plaintext SharedPreferences; migrate to
   Android Keystore / EncryptedSharedPreferences later (deps already present:

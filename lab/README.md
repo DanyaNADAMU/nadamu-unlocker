@@ -5,7 +5,7 @@
 > GUI needed; this is where initramfs changes get tested before touching a
 > real laptop.
 
-Verified: 2026-08-24 (existing A1 flow works in CI-like local runs)
+Verified: 2026-08-27 (A1 flow and contract test suite verified in QEMU lab)
 
 ## TL;DR
 
@@ -34,7 +34,7 @@ slow TCG emulation otherwise), port `2222/tcp` free on the host.
 | `entrypoint.sh` | Builds assets if missing, supervisor loop restarting QEMU runs |
 | `build_lab.sh` | Creates LUKS disk image, Ed25519 keys, initramfs hooks, runs `update-initramfs` |
 | `run_qemu.sh` | Boots kernel+initrd+disk with user-mode networking, hostfwd tcp/2222→22 |
-| `test_unlock.py` | Waits for SSH readiness, writes passphrase into passfifo via SSH |
+| `test_unlock.py` | Full test suite: SSH probe, auth rejection, wrong pass rejection, passfifo write, mapper polling |
 | `run_tests.sh` | Wrapper invoking `test_unlock.py` |
 | `ssh_lab.sh` | Interactive SSH using the lab's generated key |
 
@@ -64,4 +64,3 @@ The entrypoint supervisor loop watches for marker files in `data/`:
 - Fake "VPS" service (sshd / wireguard containers) in the same compose
   network to test modes B1/B2 offline — see
   `../docs/network-modes.md`.
-- Client-side mapper-poll verification modeled in `test_unlock.py`.

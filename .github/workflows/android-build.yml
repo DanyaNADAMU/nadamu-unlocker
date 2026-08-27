@@ -3,13 +3,25 @@ name: Android CI / Build APK
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - "android/**"
+      - ".github/workflows/android-build.yml"
   pull_request:
     branches: [ "main" ]
+    paths:
+      - "android/**"
+      - ".github/workflows/android-build.yml"
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
     - name: Checkout code
@@ -31,6 +43,11 @@ jobs:
       run: |
         echo "ANDROID_HOME=$ANDROID_HOME"
         echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "platforms;android-34" "build-tools;34.0.0"
+
+    - name: Run Unit Tests
+      working-directory: android
+      run: |
+        gradle test --stacktrace --no-daemon
 
     - name: Build Debug APK
       working-directory: android

@@ -86,12 +86,4 @@ python3 scripts/check_docs.py --base origin/main     # + trigger rules vs main
 
 Keep this list honest; remove entries when fixed.
 
-- `SshUnlocker` reports SUCCESS when the passphrase was written to the fifo,
-  without confirming the volume actually opened (violates contract in
-  `docs/unlock-flow.md`). Fix planned as part of mode A2 work.
-- `KeyManager` publishes the public key in X.509/SPKI base64 format which is
-  NOT a valid OpenSSH authorized_keys entry; dropbear will reject it.
-- `SshUnlocker` has a dead password-auth fallback (`root`/`root`) that can
-  never succeed because dropbear runs with `-s` (password auth disabled).
-- `NetworkScanner` assumes a /24 subnet regardless of the interface's actual
-  prefix length.
+- None currently active against the unlock contract. Protocol deviations (mapper-poll verification, OpenSSH wire key format, SSH pubkey authentication, CIDR subnet calculation) are resolved and covered by unit and lab test suites.

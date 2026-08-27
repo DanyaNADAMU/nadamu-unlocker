@@ -5,7 +5,7 @@
 > initrd by the lab or installer). If you change anything here, you are
 > changing BOTH sides — update this file in the same commit.
 >
-> Verified: 2026-08-25 (contract extracted from code; fifo write + VM poweroff verified by lab test_unlock.py. Mapper-poll client behavior NOT yet verified — see Known deviations)
+> Verified: 2026-08-27 (contract verified by lab test_unlock.py suite including unauthorized key rejection, invalid passphrase rejection, passfifo delivery, and client-side mapper polling)
 
 ## TL;DR
 
@@ -66,23 +66,18 @@ When the volume opens, the initramfs continues boot and the SSH session /
 tunnels die. Clients MUST treat "connection dropped + mapper device was
 present" as SUCCESS (handoff), not as an error.
 
-## Known deviations (bugs) — fix, don't rely on them
+## Known deviations (bugs)
 
-These are current-code behaviors that VIOLATE this contract:
+None currently open against the unlock protocol contract. The previous deviations (passfifo success false positives, X.509 SPKI key encoding, dead password fallback, and hardcoded /24 scanning) have been resolved and covered with unit and lab tests.
 
-1. `SshUnlocker` returns Success right after the fifo write, without the
-   mapper poll → false positives on wrong passwords.
-2. `KeyManager` generates an EC P-256 key and stores the public part as
-   X.509/SPKI base64 labeled `ecdsa-sha2-nistp256` — dropbear will reject
-   it. Must convert to SSH wire encoding (or generate via sshj).
-3. `SshUnlocker` falls back to password auth `root/root`, which can never
-   succeed (`-s` disables passwords) and must not exist.
-4. `NetworkScanner` hardcodes /24 scanning instead of using the interface's
-   real prefix length.
+Planned security enhancements:
+- Host key pinning (TOFU) to protect against local MITM on shared networks.
+- Android Keystore / EncryptedSharedPreferences migration for client private key storage.
 
 ## Lab test mapping
 
-`lab/test_unlock.py` implements: wait-for-SSH probe → fifo write →
-(watcher auto-verifies and powers off the VM). It currently does not model
-the client-side mapper polling because the lab VM shuts down on success;
-client-side verification will be tested once implemented in the app.
+`lab/test_unlock.py` implements the end-to-end verification suite:
+1. Wait-for-SSH readiness probe.
+2. Unauthorized SSH key rejection (untrusted key fails authentication).
+3. Invalid passphrase rejection (passfifo delivery without opening `/dev/mapper/<target>`).
+4. Valid passphrase delivery, client-side mapper poll verification (`/dev/mapper/test_crypt`), and VM handoff.

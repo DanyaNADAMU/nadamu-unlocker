@@ -2,7 +2,20 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-KEY_PATH="${SCRIPT_DIR}/data/keys/id_ed25519"
+KEY_PATH="${NADAMU_KEY_PATH:-${SCRIPT_DIR}/data/keys/id_ed25519}"
+HOST="${NADAMU_SSH_HOST}"
+PORT="${NADAMU_SSH_PORT}"
+
+if [ -z "$HOST" ]; then
+    if getent hosts nadamu-unlocker-lab >/dev/null 2>&1; then
+        HOST="nadamu-unlocker-lab"
+        PORT="${PORT:-22}"
+    else
+        HOST="127.0.0.1"
+        PORT="${PORT:-2222}"
+    fi
+fi
+PORT="${PORT:-2222}"
 
 if [ ! -f "$KEY_PATH" ]; then
     echo "[-] Error: SSH key not found at $KEY_PATH"
@@ -10,13 +23,17 @@ if [ ! -f "$KEY_PATH" ]; then
     exit 1
 fi
 
-echo "[*] Connecting to lab via SSH (bypassing agent and known_hosts)..."
+echo "[*] Connecting to lab at ${HOST}:${PORT} via SSH (bypassing agent and known_hosts)..."
 exec ssh \
+    -F /dev/null \
     -o IdentityAgent=none \
     -o IdentitiesOnly=yes \
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
     -o LogLevel=ERROR \
+    -o PasswordAuthentication=no \
+    -o KbdInteractiveAuthentication=no \
+    -o PubkeyAuthentication=yes \
     -i "$KEY_PATH" \
-    -p 2222 \
-    root@127.0.0.1 "$@"
+    -p "$PORT" \
+    "root@${HOST}" "$@"

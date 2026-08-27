@@ -169,9 +169,10 @@ fun UnlockScreen(
                     if (targets.isEmpty()) {
                         addLog("Failed: No laptop found on USB network.")
                     } else {
+                        val privKeyPem = keyManager.getPrivateKeyPem()
                         targets.forEach { target ->
                             addLog("Unlocking ${target.ip}...")
-                            when (val res = unlocker.unlock(target.ip, target.port, password)) {
+                            when (val res = unlocker.unlock(target.ip, target.port, password, privKeyPem)) {
                                 is UnlockResult.Success -> addLog("[SUCCESS] ${res.message}")
                                 is UnlockResult.Failure -> addLog("[FAIL] ${res.error}")
                             }

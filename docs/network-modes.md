@@ -19,8 +19,8 @@ one implementation (ADR 0001); B1/B2 run concurrently (ADR 0002).
 | A3 | Laptop joins phone's Wi-Fi hotspot | wpa_supplicant + firmware for laptop's Wi-Fi chip + DHCP on wlan0 | connect to hotspot, then same scan | Wi-Fi PSK (scoped: join-network only) | [planned] — shares implementation with A4 |
 | A4 | Both on same Wi-Fi LAN | same as A3 but SSID = home router | same scan on home subnet | Wi-Fi PSK | [planned] — same code as A3 |
 
-Verified: 2026-08-25 — A1 verified end-to-end in the QEMU lab
-(`lab/test_unlock.py`: SSH probe → fifo write → unlock → poweroff).
+Verified: 2026-08-27 — A1 verified end-to-end in the QEMU lab
+(`lab/test_unlock.py`: SSH probe → auth rejection → invalid passphrase rejection → fifo write → mapper poll verification → poweroff).
 A2 claims are not yet machine-verified.
 
 Notes:
