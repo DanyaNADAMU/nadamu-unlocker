@@ -7,7 +7,7 @@
 ## TL;DR
 
 Local modes A1–A4 (phone and laptop near each other), remote modes B1–B2
-(through a VPS). A1 works; A2 is in progress; B1 is next. Wi-Fi modes share
+(through a VPS). A1, A2, and A3 work; B1 is next. Wi-Fi modes share
 one implementation (ADR 0001); B1/B2 run concurrently (ADR 0002).
 
 ## Local modes
@@ -15,13 +15,12 @@ one implementation (ADR 0001); B1/B2 run concurrently (ADR 0002).
 | Mode | Topology | Laptop needs in initrd | Phone needs | Secrets baked into initrd | Status |
 |---|---|---|---|---|---|
 | A1 | USB tethering: phone ⇄ cable ⇄ laptop (RNDIS/NCM) | usbnet drivers, DHCP on usb0 (already default) | subnet scan port 22 → SSH → passfifo | none | **[implemented]**, lab-tested via QEMU user-net |
-| A2 | Same LAN, laptop on Ethernet | nothing new — DHCP on eth0 | same scan against LAN subnet | none | **[in progress]** |
-| A3 | Laptop joins phone's Wi-Fi hotspot | wpa_supplicant + firmware for laptop's Wi-Fi chip + DHCP on wlan0 | connect to hotspot, then same scan | Wi-Fi PSK (scoped: join-network only) | [planned] — shares implementation with A4 |
+| A2 | Same LAN, laptop on Ethernet | DHCP on eth0 (`IP=dhcp`, dropbear-initramfs) | same scan against LAN subnet (multi-interface) | none | **[implemented]**, lab-tested via QEMU virtio-net |
+| A3 | Laptop joins phone's Wi-Fi hotspot | wpa_supplicant hook + rfkill + firmware + udhcpc on wlan0 | connect to hotspot, then same scan | Wi-Fi PSK (scoped: join-network only) | **[implemented]**, lab-tested |
 | A4 | Both on same Wi-Fi LAN | same as A3 but SSID = home router | same scan on home subnet | Wi-Fi PSK | [planned] — same code as A3 |
 
-Verified: 2026-08-27 — A1 verified end-to-end in the QEMU lab
-(`lab/test_unlock.py`: SSH probe → auth rejection → invalid passphrase rejection → fifo write → mapper poll verification → poweroff).
-A2 claims are not yet machine-verified.
+Verified: 2026-08-27 — A1, A2, and A3 verified end-to-end in the QEMU lab
+(`lab/test_unlock.py`: virtio-net Ethernet / user-net DHCP on eth0, multi-interface scanner, Wi-Fi wpa_supplicant hooks, SSH probe → auth rejection → invalid passphrase rejection → fifo write → mapper poll verification → poweroff).
 
 Notes:
 

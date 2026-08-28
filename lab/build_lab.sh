@@ -108,6 +108,9 @@ cat << 'EOF' > /etc/initramfs-tools/modules
 virtio_pci
 virtio_net
 virtio_blk
+cfg80211
+mac80211
+rfkill
 dm_mod
 dm_crypt
 aes
@@ -158,6 +161,30 @@ copy_exec /sbin/cryptsetup /sbin/cryptsetup
 exit 0
 EOF
 chmod +x /etc/initramfs-tools/hooks/nadamu_unlock
+
+# Hook for Wi-Fi tools (wpa_supplicant, rfkill, iw) in lab
+cat << 'EOF' > /etc/initramfs-tools/hooks/nadamu_wifi
+#!/bin/sh
+set -e
+
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0;; esac
+
+. /usr/share/initramfs-tools/hook-functions
+
+if command -v wpa_supplicant >/dev/null 2>&1; then
+    copy_exec /sbin/wpa_supplicant /sbin/wpa_supplicant 2>/dev/null || copy_exec /usr/sbin/wpa_supplicant /sbin/wpa_supplicant
+fi
+if command -v rfkill >/dev/null 2>&1; then
+    copy_exec /sbin/rfkill /sbin/rfkill 2>/dev/null || copy_exec /usr/sbin/rfkill /sbin/rfkill
+fi
+if command -v iw >/dev/null 2>&1; then
+    copy_exec /sbin/iw /sbin/iw 2>/dev/null || copy_exec /usr/sbin/iw /sbin/iw
+fi
+exit 0
+EOF
+chmod +x /etc/initramfs-tools/hooks/nadamu_wifi
 
 # Script to unlock LUKS via passfifo during local-top
 cat << 'EOF' > /etc/initramfs-tools/scripts/local-top/nadamu_cryptroot

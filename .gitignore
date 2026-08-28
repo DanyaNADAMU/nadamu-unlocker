@@ -5,10 +5,13 @@
 .vscode/
 
 # Build artifacts
-build/
+.gradle/
+**/build/
 *.class
 *.apk
 *.aab
+*.hprof
+local.properties
 
 # QEMU Test Lab images
 test-lab/*.img
@@ -24,6 +27,8 @@ lab/data/
 *.key
 *.id_ed25519
 *.id_rsa
+*.jks
+*.keystore
 !laptop/config/dropbear/authorized_keys.example
 .aider*
 

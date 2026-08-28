@@ -7,23 +7,25 @@ Verified: never (build verified only in CI)
 
 ## TL;DR
 
-Jetpack Compose UI, SSHJ for SSH, subnet scanner for discovery. Talks the
-protocol documented in `../docs/unlock-flow.md`. Currently targets mode A1;
-mode A2 work includes fixing the known protocol deviations listed there.
+Jetpack Compose UI, SSHJ for SSH, multi-interface subnet scanner for discovery.
+Talks the protocol documented in `../docs/unlock-flow.md`. Supports local modes
+A1 (USB tethering), A2 (LAN / Ethernet), and A3 (Wi-Fi hotspot).
 
 ## Build & Test
 
-JDK 17 required.
+JDK 25 (Amazon Corretto) and Gradle 9.7.1.
 
 ```sh
 cd android
-gradle test                 # Run unit tests (KeyManagerTest, NetworkScannerTest, SshUnlockerTest)
-gradle assembleDebug        # APK: app/build/outputs/apk/debug/
+./gradlew test              # Run unit tests (KeyManagerTest, NetworkScannerTest, SshUnlockerTest)
+./gradlew assembleDebug     # APK: app/build/outputs/apk/debug/
+./gradlew assembleRelease   # Release APK: app/build/outputs/apk/release/
 ```
 
 CI runs unit tests and builds the debug APK on every push/PR to main
-(`.github/workflows/android-build.yml`) and uploads the debug APK as an
-artifact.
+(`.github/workflows/android-build.yml`). Tagged releases trigger automated
+signing and publication to GitHub Releases
+(`.github/workflows/release.yml`; see `../docs/branching-and-releases.md`).
 
 ## Code map
 

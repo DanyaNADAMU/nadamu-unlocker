@@ -27,22 +27,22 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Set up JDK 17
+    - name: Set up JDK 25 (Corretto)
       uses: actions/setup-java@v4
       with:
-        java-version: '17'
-        distribution: 'temurin'
+        java-version: '25'
+        distribution: 'corretto'
 
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v3
       with:
-        gradle-version: '8.7'
+        gradle-version: '9.7.1'
         build-root-directory: android
 
     - name: Ensure Android SDK / Build Tools
       run: |
         echo "ANDROID_HOME=$ANDROID_HOME"
-        echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "platforms;android-34" "build-tools;34.0.0"
+        echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
 
     - name: Run Unit Tests
       working-directory: android

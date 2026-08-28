@@ -1,0 +1,150 @@
+name: Release Android APK
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag (e.g. v1.0.0)"
+        required: true
+        default: "v1.0.0"
+      draft:
+        description: "Create draft release"
+        type: boolean
+        default: false
+      prerelease:
+        description: "Mark as prerelease"
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  release-apk:
+    name: Build, Sign & Publish APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine Version Tag
+        id: version_info
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag_name }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Building release for tag: $TAG"
+
+      - name: Set up JDK 25 (Corretto)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: 'corretto'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '9.7.1'
+          build-root-directory: android
+
+      - name: Ensure Android SDK / Build Tools
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Run Unit Tests
+        working-directory: android
+        run: |
+          gradle test --stacktrace --no-daemon
+
+      - name: Build Release APK
+        working-directory: android
+        run: |
+          gradle assembleRelease --stacktrace --no-daemon
+
+      - name: Sign APK (Release Keystore or Fallback)
+        id: sign_apk
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          TAG_NAME: ${{ steps.version_info.outputs.tag }}
+        run: |
+          BUILD_TOOLS_DIR="$ANDROID_HOME/build-tools/35.0.0"
+          UNSIGNED_APK="android/app/build/outputs/apk/release/app-release-unsigned.apk"
+          if [ ! -f "$UNSIGNED_APK" ]; then
+            # Check for alternative naming if gradle generated app-release.apk
+            UNSIGNED_APK=$(find android/app/build/outputs/apk/release/ -name "*.apk" | head -n 1)
+          fi
+
+          FINAL_APK="nadamu-unlocker-${TAG_NAME}.apk"
+
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ]; then
+            echo "Signing with repository secret release keystore..."
+            echo "$KEYSTORE_BASE64" | base64 -d > release.jks
+            
+            KEY_PASS="${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
+            
+            $BUILD_TOOLS_DIR/zipalign -v -p 4 "$UNSIGNED_APK" app-aligned.apk
+            $BUILD_TOOLS_DIR/apksigner sign --ks release.jks \
+              --ks-pass "pass:$KEYSTORE_PASSWORD" \
+              --ks-key-alias "$KEY_ALIAS" \
+              --key-pass "pass:$KEY_PASS" \
+              --out "$FINAL_APK" \
+              app-aligned.apk
+            
+            rm -f release.jks app-aligned.apk
+          else
+            echo "WARNING: ANDROID_KEYSTORE_BASE64 secret not found. Falling back to debug signing for testing..."
+            # Create a fallback debug keystore if not already present
+            DEBUG_KEYSTORE="$HOME/.android/debug.keystore"
+            mkdir -p "$HOME/.android"
+            if [ ! -f "$DEBUG_KEYSTORE" ]; then
+              keytool -genkey -v -keystore "$DEBUG_KEYSTORE" -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+            fi
+            
+            $BUILD_TOOLS_DIR/zipalign -v -p 4 "$UNSIGNED_APK" app-aligned.apk
+            $BUILD_TOOLS_DIR/apksigner sign --ks "$DEBUG_KEYSTORE" \
+              --ks-pass pass:android \
+              --ks-key-alias androiddebugkey \
+              --key-pass pass:android \
+              --out "$FINAL_APK" \
+              app-aligned.apk
+            
+            rm -f app-aligned.apk
+          fi
+
+          echo "Verifying APK signature..."
+          $BUILD_TOOLS_DIR/apksigner verify --verbose "$FINAL_APK"
+
+          echo "Generating SHA-256 checksum..."
+          sha256sum "$FINAL_APK" > "${FINAL_APK}.sha256"
+
+          echo "final_apk=$FINAL_APK" >> $GITHUB_OUTPUT
+          echo "final_sha256=${FINAL_APK}.sha256" >> $GITHUB_OUTPUT
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version_info.outputs.tag }}
+          name: Release ${{ steps.version_info.outputs.tag }}
+          files: |
+            ${{ steps.sign_apk.outputs.final_apk }}
+            ${{ steps.sign_apk.outputs.final_sha256 }}
+          generate_release_notes: true
+          draft: ${{ github.event.inputs.draft || false }}
+          prerelease: ${{ github.event.inputs.prerelease || contains(steps.version_info.outputs.tag, '-beta') || contains(steps.version_info.outputs.tag, '-rc') }}

@@ -20,8 +20,8 @@ the laptop.
 android/    Android app (Kotlin, Compose, SSHJ). Discovers laptop, sends passphrase.
 laptop/     What gets installed on the target laptop: initramfs hooks + unlock CLI.
 lab/        QEMU-based test lab in Docker: builds a real initramfs and tests unlocking end-to-end.
-docs/       Cross-component contracts, architecture decisions (ADR), network mode matrix.
-.github/    CI: Android debug APK build on push/PR to main.
+docs/       Cross-component contracts, architecture decisions (ADR), release workflows, network mode matrix.
+.github/    CI/CD: Android debug APK build, release publishing, doc linter.
 ```
 
 ## Documentation map — read only what you need
@@ -29,10 +29,12 @@ docs/       Cross-component contracts, architecture decisions (ADR), network mod
 | Question | Document |
 |---|---|
 | How do the app and initramfs talk? Protocol details | `docs/unlock-flow.md` |
+| How are branches, PRs, and releases managed? | `docs/branching-and-releases.md` |
 | Which network topologies are supported / planned? | `docs/network-modes.md` |
 | Why Wi-Fi and not Bluetooth in initramfs? | `docs/adr/0001-wifi-not-bluetooth-in-initramfs.md` |
 | Why both reverse SSH and WireGuard for remote unlock? | `docs/adr/0002-dual-transport-revssh-plus-wireguard.md` |
 | Why passfifo instead of other unlock mechanisms? | `docs/adr/0003-luks-unlock-via-passfifo.md` |
+| What toolchain and Android OS versions are supported? | `docs/adr/0004-android-toolchain-and-device-compatibility.md` |
 | How to build/run/test one component? | `README.md` inside that component's directory |
 
 ## Commands
@@ -43,8 +45,8 @@ cd lab && docker compose up -d          # build lab assets + start VM container
 cd lab && ./run_tests.sh                # run automated unlock test against running VM
 cd lab && ./ssh_lab.sh                  # interactive shell into the VM's initramfs
 
-# Android build (JDK 17)
-cd android && gradle assembleDebug      # CI does the same; output in app/build/outputs/apk/
+# Android build (JDK 25 Corretto, Gradle 9.7.1)
+cd android && ./gradlew assembleDebug   # CI does the same; output in app/build/outputs/apk/
 ```
 
 ## Conventions

@@ -85,7 +85,7 @@ fun UnlockScreen(
     var isScanning by remember { mutableStateOf(false) }
     var isUnlocking by remember { mutableStateOf(false) }
     var discoveredDevices by remember { mutableStateOf<List<DiscoveredDevice>>(emptyList()) }
-    var logs by remember { mutableStateOf(listOf("Ready. Connect USB cable and enable Tethering.")) }
+    var logs by remember { mutableStateOf(listOf("Ready. Connect via Wi-Fi Hotspot, same LAN, or USB.")) }
 
     fun addLog(msg: String) {
         logs = (logs + msg).takeLast(20)
@@ -119,10 +119,10 @@ fun UnlockScreen(
             IconButton(onClick = {
                 scope.launch {
                     isScanning = true
-                    addLog("Scanning for laptop in USB subnet...")
+                    addLog("Scanning for laptop across active networks (Wi-Fi/LAN/USB)...")
                     discoveredDevices = scanner.scanSubnetForLuks()
                     if (discoveredDevices.isEmpty()) {
-                        addLog("No Dropbear devices found on active interfaces.")
+                        addLog("No Dropbear devices found on active networks.")
                     } else {
                         discoveredDevices.forEach { dev ->
                             addLog("Found device: ${dev.ip}:${dev.port} (${dev.interfaceName})")
@@ -167,7 +167,7 @@ fun UnlockScreen(
                     }
 
                     if (targets.isEmpty()) {
-                        addLog("Failed: No laptop found on USB network.")
+                        addLog("Failed: No laptop found on Wi-Fi / LAN / USB network.")
                     } else {
                         val privKeyPem = keyManager.getPrivateKeyPem()
                         targets.forEach { target ->
@@ -194,7 +194,7 @@ fun UnlockScreen(
             } else {
                 Icon(Icons.Default.Usb, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("UNLOCK LAPTOP (USB)", fontWeight = FontWeight.Bold)
+                Text("UNLOCK LAPTOP (LOCAL)", fontWeight = FontWeight.Bold)
             }
         }
 

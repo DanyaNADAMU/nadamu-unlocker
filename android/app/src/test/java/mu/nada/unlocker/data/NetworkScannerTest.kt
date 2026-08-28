@@ -57,4 +57,22 @@ class NetworkScannerTest {
         val ips = NetworkScanner.calculateSubnetIps(address, 31.toShort())
         assertTrue(ips.isEmpty())
     }
+
+    @Test
+    fun testHotspotSubnets_standardAndroidAp() {
+        // Standard Android AP uses 192.168.43.1 gateway
+        val address = InetAddress.getByName("192.168.43.1") as Inet4Address
+        val ips = NetworkScanner.calculateSubnetIps(address, 24.toShort())
+
+        assertEquals(254, ips.size)
+        assertEquals("192.168.43.1", ips.first())
+        assertEquals("192.168.43.254", ips.last())
+        assertTrue(NetworkScanner.COMMON_HOTSPOT_SUBNETS.contains("192.168.43.1"))
+    }
+
+    @Test
+    fun testHotspotSubnets_wiFiDirectAndVendor() {
+        assertTrue(NetworkScanner.COMMON_HOTSPOT_SUBNETS.contains("192.168.49.1"))
+        assertTrue(NetworkScanner.COMMON_HOTSPOT_SUBNETS.contains("192.168.50.1"))
+    }
 }

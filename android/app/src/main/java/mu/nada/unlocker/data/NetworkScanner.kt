@@ -7,6 +7,7 @@ import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.Inet4Address
+import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.Socket
@@ -21,6 +22,12 @@ data class DiscoveredDevice(
 class NetworkScanner {
 
     companion object {
+        val COMMON_HOTSPOT_SUBNETS = listOf(
+            "192.168.43.1", // Standard Android AP
+            "192.168.49.1", // Wi-Fi Direct / Hotspot
+            "192.168.50.1"  // Vendor Hotspot
+        )
+
         /**
          * Pure function to calculate candidate host IPs within an IPv4 CIDR subnet.
          * Handles prefix lengths (/16, /24, /28, /30, etc.) capped to maxHosts.
@@ -57,18 +64,18 @@ class NetworkScanner {
     }
 
     /**
-     * Find active USB tethering / RNDIS / Ethernet / WLAN interfaces.
+     * Find active local LAN (Ethernet, Wi-Fi), AP/Hotspot, and USB tethering (RNDIS, NCM) interfaces.
      */
-    fun getTetheringInterfaces(): List<NetworkInterface> {
-        val tetheringPrefixes = listOf("rndis", "usb", "ncm", "eth", "wlan")
+    fun getEligibleInterfaces(): List<NetworkInterface> {
+        val targetPrefixes = listOf("eth", "en", "wlan", "rndis", "usb", "ncm", "ap", "softap", "swlan", "tether")
         val interfaces = mutableListOf<NetworkInterface>()
         try {
-            val netInterfaces = NetworkInterface.getNetworkInterfaces()
+            val netInterfaces = NetworkInterface.getNetworkInterfaces() ?: return emptyList()
             while (netInterfaces.hasMoreElements()) {
                 val element = netInterfaces.nextElement()
                 if (element.isUp && !element.isLoopback) {
                     val name = element.name.lowercase()
-                    if (tetheringPrefixes.any { name.startsWith(it) }) {
+                    if (targetPrefixes.any { name.startsWith(it) }) {
                         interfaces.add(element)
                     }
                 }
@@ -80,28 +87,53 @@ class NetworkScanner {
     }
 
     /**
-     * Scan network prefix for interface concurrently for port 22 dropbear.
+     * Backward-compatible alias for getEligibleInterfaces.
+     */
+    fun getTetheringInterfaces(): List<NetworkInterface> = getEligibleInterfaces()
+
+    /**
+     * Scan network prefixes concurrently for port 22 dropbear.
+     * If targetInterface is specified, only that interface is scanned.
+     * If null, all active eligible interfaces (LAN/Ethernet, Wi-Fi, Hotspot, USB) are scanned concurrently.
      */
     suspend fun scanSubnetForLuks(targetInterface: NetworkInterface? = null): List<DiscoveredDevice> =
         withContext(Dispatchers.IO) {
-            val iface = targetInterface ?: getTetheringInterfaces().firstOrNull()
-                ?: return@withContext emptyList()
+            val interfaces = if (targetInterface != null) {
+                listOf(targetInterface)
+            } else {
+                getEligibleInterfaces()
+            }
 
-            val interfaceAddresses = iface.interfaceAddresses
-            val ipv4Addr = interfaceAddresses.firstOrNull { it.address is Inet4Address }
-                ?: return@withContext emptyList()
+            val tasks = interfaces.flatMap { iface ->
+                val ipv4Addresses = iface.interfaceAddresses.filter { it.address is Inet4Address }
+                ipv4Addresses.flatMap { addr ->
+                    val inet4 = addr.address as Inet4Address
+                    val prefixLength = addr.networkPrefixLength
+                    val ipList = calculateSubnetIps(inet4, prefixLength)
+                    ipList.map { ip ->
+                        async {
+                            probeHost(ip, iface.name)
+                        }
+                    }
+                }
+            }.toMutableList()
 
-            val inet4 = ipv4Addr.address as Inet4Address
-            val prefixLength = ipv4Addr.networkPrefixLength
-            val ipList = calculateSubnetIps(inet4, prefixLength)
-
-            val deferred = ipList.map { ip ->
-                async {
-                    probeHost(ip, iface.name)
+            // If no devices found via explicit interface addresses, probe common Hotspot subnets
+            if (tasks.isEmpty() && targetInterface == null) {
+                COMMON_HOTSPOT_SUBNETS.forEach { gatewayIp ->
+                    try {
+                        val addr = InetAddress.getByName(gatewayIp) as? Inet4Address
+                        if (addr != null) {
+                            val ipList = calculateSubnetIps(addr, 24.toShort())
+                            ipList.map { ip ->
+                                tasks.add(async { probeHost(ip, "hotspot") })
+                            }
+                        }
+                    } catch (_: Exception) {}
                 }
             }
 
-            deferred.awaitAll().filterNotNull()
+            tasks.awaitAll().filterNotNull().distinctBy { "${it.ip}:${it.port}" }
         }
 
     /**

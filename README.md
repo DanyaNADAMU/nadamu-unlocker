@@ -25,14 +25,14 @@ Full matrix with requirements and test coverage:
 | Mode | Topology | Status |
 |---|---|---|
 | A1 | Phone ⇄ laptop via USB tethering (RNDIS) | [implemented], lab-tested |
-| A2 | Phone and laptop on same LAN, laptop via Ethernet | **[in progress]** |
-| A3 | Laptop on phone's Wi-Fi hotspot | [planned] |
+| A2 | Phone and laptop on same LAN, laptop via Ethernet | [implemented], lab-tested |
+| A3 | Laptop on phone's Wi-Fi hotspot | [implemented], lab-tested |
 | A4 | Phone and laptop on same Wi-Fi LAN | [planned] |
-| B1 | Remote via VPS, reverse SSH tunnel from laptop | [planned] — next after A2 |
+| B1 | Remote via VPS, reverse SSH tunnel from laptop | [planned] — next after A3 |
 | B2 | Remote via VPS, WireGuard mesh | [planned], after B1 |
 
-Verified: 2026-08-25 — A1 flow exercised end-to-end by `lab/test_unlock.py`
-(SSH into initramfs dropbear, passfifo write, VM powers off after unlock).
+Verified: 2026-08-27 — A1, A2, and A3 flows exercised end-to-end by `lab/test_unlock.py`
+(SSH into initramfs dropbear on eth0/user-net, passfifo write, VM powers off after unlock).
 
 ## Repository layout
 
@@ -68,4 +68,6 @@ docker compose up -d      # builds initramfs + LUKS disk, boots QEMU VM
 ## Docs index
 
 See [`AGENTS.md`](AGENTS.md) for the full documentation map and the rules
-this repository follows for keeping docs current.
+this repository follows for keeping docs current. See
+[`docs/branching-and-releases.md`](docs/branching-and-releases.md) for branch
+management, PR policies, and release workflows.
