@@ -1,16 +1,21 @@
 package mu.nada.unlocker.data
 
 import android.content.Context
+import java.io.ByteArrayOutputStream
+import java.io.DataOutputStream
+import java.security.SecureRandom
+import java.security.Security
 import java.util.Base64
+import net.schmizz.sshj.SSHClient
+import net.schmizz.sshj.common.Buffer
+import net.schmizz.sshj.common.KeyType
 import org.bouncycastle.asn1.pkcs.PrivateKeyInfo
 import org.bouncycastle.crypto.generators.Ed25519KeyPairGenerator
 import org.bouncycastle.crypto.params.Ed25519KeyGenerationParameters
 import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
 import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
 import org.bouncycastle.crypto.util.PrivateKeyInfoFactory
-import java.io.ByteArrayOutputStream
-import java.io.DataOutputStream
-import java.security.SecureRandom
+import org.bouncycastle.jce.provider.BouncyCastleProvider
 
 class KeyManager(private val context: Context) {
 
@@ -20,6 +25,23 @@ class KeyManager(private val context: Context) {
         private const val KEY_PUBLIC_OPENSSH = "public_key_openssh"
         private const val KEY_SAVED_PASS = "saved_luks_pass"
         private const val DEFAULT_COMMENT = "nadamu-android-client"
+
+        init {
+            initBouncyCastle()
+        }
+
+        /**
+         * Replace Android's stripped-down BC provider with the full BouncyCastle provider
+         * so that modern crypto algorithms like X25519 and Ed25519 work seamlessly.
+         */
+        fun initBouncyCastle() {
+            try {
+                Security.removeProvider(BouncyCastleProvider.PROVIDER_NAME)
+                Security.insertProviderAt(BouncyCastleProvider(), 1)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
 
         /**
          * Pure helper to encode Ed25519 raw public key bytes into OpenSSH wire format.
@@ -66,6 +88,21 @@ class KeyManager(private val context: Context) {
 
             return Pair(privPem, openSshPub)
         }
+
+        /**
+         * Derive OpenSSH public key string from any standard private key format supported by SSHJ
+         * (PKCS#8, OpenSSH, RSA, Ed25519, ECDSA).
+         */
+        fun deriveOpenSshPublicKey(privateKeyRaw: String, comment: String = DEFAULT_COMMENT): String {
+            initBouncyCastle()
+            val ssh = SSHClient()
+            val kp = ssh.loadKeys(privateKeyRaw.trim(), null, null)
+            val pub = kp.public
+            val keyType = KeyType.fromKey(pub).toString()
+            val buffer = Buffer.PlainBuffer().putPublicKey(pub)
+            val b64 = Base64.getEncoder().encodeToString(buffer.compactData)
+            return "$keyType $b64 $comment"
+        }
     }
 
     private val prefs by lazy {
@@ -91,6 +128,39 @@ class KeyManager(private val context: Context) {
             .putString(KEY_PUBLIC_OPENSSH, newOpenSshPub)
             .apply()
 
+        return Pair(newPrivPem, newOpenSshPub)
+    }
+
+    /**
+     * Import a custom private key (PEM / OpenSSH / RSA / Ed25519 / ECDSA).
+     * Derives and stores both the private key and corresponding OpenSSH public key.
+     */
+    fun importPrivateKey(rawKey: String, comment: String = DEFAULT_COMMENT): Result<Pair<String, String>> {
+        return try {
+            val trimmed = rawKey.trim()
+            if (trimmed.isEmpty()) {
+                return Result.failure(IllegalArgumentException("Private key content cannot be empty"))
+            }
+            val openSshPub = deriveOpenSshPublicKey(trimmed, comment)
+            prefs.edit()
+                .putString(KEY_PRIVATE_PEM, trimmed)
+                .putString(KEY_PUBLIC_OPENSSH, openSshPub)
+                .apply()
+            Result.success(Pair(trimmed, openSshPub))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Regenerate a brand new Ed25519 keypair and overwrite current keys.
+     */
+    fun regenerateKeyPair(comment: String = DEFAULT_COMMENT): Pair<String, String> {
+        val (newPrivPem, newOpenSshPub) = generateEd25519KeyPair(comment)
+        prefs.edit()
+            .putString(KEY_PRIVATE_PEM, newPrivPem)
+            .putString(KEY_PUBLIC_OPENSSH, newOpenSshPub)
+            .apply()
         return Pair(newPrivPem, newOpenSshPub)
     }
 

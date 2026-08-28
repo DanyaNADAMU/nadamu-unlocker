@@ -5,7 +5,7 @@
 > initrd by the lab or installer). If you change anything here, you are
 > changing BOTH sides — update this file in the same commit.
 >
-> Verified: 2026-08-27 (contract verified by lab test_unlock.py suite including unauthorized key rejection, invalid passphrase rejection, passfifo delivery, and client-side mapper polling)
+> Verified: 2026-08-28 (contract verified by lab test_unlock.py suite, Android BouncyCastle X25519/Ed25519 provider registration, and local multi-interface tethering)
 
 ## TL;DR
 
@@ -27,9 +27,10 @@ is NOT success.
 
 - Port: `22` (lab maps it to host port `2222`).
 - Auth: SSH public key only. Dropbear runs with `-s -j -k`
-  (no password, no port/host forwarding). Client key: Ed25519 preferred;
+  (no password, no port/host forwarding). Client key: Ed25519 preferred (with custom private key import support);
   the authorized_keys entry MUST be in OpenSSH wire format
-  (`ssh-ed25519 AAAA... comment`), NOT X.509/SPKI base64.
+  (`ssh-ed25519 AAAA... comment`), NOT X.509/SPKI base64. On Android, full BouncyCastle provider
+  is registered at slot 1 to support X25519 key exchange and Ed25519 signatures.
 - Host key pinning: planned TOFU (first-connect trust, then pinned).
   Not implemented yet.
 

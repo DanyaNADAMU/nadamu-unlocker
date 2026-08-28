@@ -58,4 +58,17 @@ class KeyManagerTest {
             assertEquals(dummyPub[i], extractedPub[i])
         }
     }
+
+    @Test
+    fun testDeriveOpenSshPublicKey_fromGeneratedKey() {
+        val (privPem, openSshPub) = KeyManager.generateEd25519KeyPair("custom-user")
+        val derivedPub = KeyManager.deriveOpenSshPublicKey(privPem, "custom-user")
+
+        val expectedParts = openSshPub.split(" ")
+        val derivedParts = derivedPub.split(" ")
+
+        assertEquals(expectedParts[0], derivedParts[0]) // ssh-ed25519
+        assertEquals(expectedParts[1], derivedParts[1]) // key bytes base64
+        assertEquals("custom-user", derivedParts[2])
+    }
 }

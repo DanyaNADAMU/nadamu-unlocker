@@ -16,6 +16,12 @@ class SshUnlocker(
     private val clientFactory: () -> SSHClient = { SSHClient() }
 ) {
 
+    companion object {
+        init {
+            mu.nada.unlocker.data.KeyManager.initBouncyCastle()
+        }
+    }
+
     /**
      * Connect to Dropbear initramfs via SSH, authenticate using the client's Ed25519/ECDSA private key,
      * inject password into passfifo, and poll the mapper device to confirm successful LUKS opening.
