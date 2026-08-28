@@ -3,7 +3,7 @@ name: Release Android APK
 on:
   push:
     tags:
-      - "v[0-9]+.[0-9]+.[0-9]+*"
+      - "v*"
   workflow_dispatch:
     inputs:
       tag_name:
@@ -87,7 +87,6 @@ jobs:
           BUILD_TOOLS_DIR="$ANDROID_HOME/build-tools/35.0.0"
           UNSIGNED_APK="android/app/build/outputs/apk/release/app-release-unsigned.apk"
           if [ ! -f "$UNSIGNED_APK" ]; then
-            # Check for alternative naming if gradle generated app-release.apk
             UNSIGNED_APK=$(find android/app/build/outputs/apk/release/ -name "*.apk" | head -n 1)
           fi
 
@@ -95,11 +94,11 @@ jobs:
 
           if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ]; then
             echo "Signing with repository secret release keystore..."
-            echo "$KEYSTORE_BASE64" | base64 -d > release.jks
+            echo "$KEYSTORE_BASE64" | tr -d '\r\n ' | base64 -d > release.jks
             
             KEY_PASS="${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
             
-            $BUILD_TOOLS_DIR/zipalign -v -p 4 "$UNSIGNED_APK" app-aligned.apk
+            $BUILD_TOOLS_DIR/zipalign -f -v -p 4 "$UNSIGNED_APK" app-aligned.apk
             $BUILD_TOOLS_DIR/apksigner sign --ks release.jks \
               --ks-pass "pass:$KEYSTORE_PASSWORD" \
               --ks-key-alias "$KEY_ALIAS" \
@@ -110,14 +109,13 @@ jobs:
             rm -f release.jks app-aligned.apk
           else
             echo "WARNING: ANDROID_KEYSTORE_BASE64 secret not found. Falling back to debug signing for testing..."
-            # Create a fallback debug keystore if not already present
             DEBUG_KEYSTORE="$HOME/.android/debug.keystore"
             mkdir -p "$HOME/.android"
             if [ ! -f "$DEBUG_KEYSTORE" ]; then
               keytool -genkey -v -keystore "$DEBUG_KEYSTORE" -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
             fi
             
-            $BUILD_TOOLS_DIR/zipalign -v -p 4 "$UNSIGNED_APK" app-aligned.apk
+            $BUILD_TOOLS_DIR/zipalign -f -v -p 4 "$UNSIGNED_APK" app-aligned.apk
             $BUILD_TOOLS_DIR/apksigner sign --ks "$DEBUG_KEYSTORE" \
               --ks-pass pass:android \
               --ks-key-alias androiddebugkey \
@@ -139,6 +137,8 @@ jobs:
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ steps.version_info.outputs.tag }}
           name: Release ${{ steps.version_info.outputs.tag }}
