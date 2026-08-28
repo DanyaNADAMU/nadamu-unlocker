@@ -1,7 +1,7 @@
 package mu.nada.unlocker.data
 
 import android.content.Context
-import android.util.Base64
+import java.util.Base64
 import org.bouncycastle.asn1.pkcs.PrivateKeyInfo
 import org.bouncycastle.crypto.generators.Ed25519KeyPairGenerator
 import org.bouncycastle.crypto.params.Ed25519KeyGenerationParameters
@@ -39,7 +39,7 @@ class KeyManager(private val context: Context) {
             dos.writeInt(pubBytes.size)
             dos.write(pubBytes)
 
-            val b64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+            val b64 = Base64.getEncoder().encodeToString(baos.toByteArray())
             return "ssh-ed25519 $b64 $comment"
         }
 
@@ -61,7 +61,7 @@ class KeyManager(private val context: Context) {
             // Encode PKCS#8 PEM private key
             val pki: PrivateKeyInfo = PrivateKeyInfoFactory.createPrivateKeyInfo(privParams)
             val pkcs8Bytes = pki.encoded
-            val privB64 = Base64.encodeToString(pkcs8Bytes, Base64.NO_WRAP)
+            val privB64 = Base64.getEncoder().encodeToString(pkcs8Bytes)
             val privPem = "-----BEGIN PRIVATE KEY-----\n$privB64\n-----END PRIVATE KEY-----\n"
 
             return Pair(privPem, openSshPub)

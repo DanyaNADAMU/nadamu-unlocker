@@ -37,13 +37,15 @@ class NetworkScanner {
             prefixLength: Short,
             maxHosts: Int = 254
         ): List<String> {
+            if (prefixLength < 1 || prefixLength > 30) return emptyList()
+
             val addrBytes = address.address
             val ipInt = ((addrBytes[0].toInt() and 0xFF) shl 24) or
                     ((addrBytes[1].toInt() and 0xFF) shl 16) or
                     ((addrBytes[2].toInt() and 0xFF) shl 8) or
                     (addrBytes[3].toInt() and 0xFF)
 
-            val prefix = prefixLength.toInt().coerceIn(1, 30)
+            val prefix = prefixLength.toInt()
             val mask = if (prefix == 0) 0 else (-1 shl (32 - prefix))
             val netInt = ipInt and mask
             val hostBits = 32 - prefix
