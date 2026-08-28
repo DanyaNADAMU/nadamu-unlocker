@@ -42,7 +42,7 @@ jobs:
     - name: Ensure Android SDK / Build Tools
       run: |
         echo "ANDROID_HOME=$ANDROID_HOME"
-        echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+        echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "platforms;android-35" "build-tools;36.0.0" "build-tools;35.0.0"
 
     - name: Run Unit Tests
       working-directory: android
