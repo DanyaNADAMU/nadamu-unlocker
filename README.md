@@ -1,5 +1,7 @@
 # nadamu-unlocker
 
+[ English ](README.md) • [ Русский ](README.ru.md) | [ 📖 Documentation ](docs/en/index.md)
+
 > Unlock a LUKS-encrypted laptop from your Android phone, over the network.
 > The laptop runs an SSH server inside its initramfs (before the disk is
 > decrypted); the phone sends the passphrase to it.
@@ -15,33 +17,33 @@
 ```
 
 The protocol contract between both sides is documented in
-[`docs/unlock-flow.md`](docs/unlock-flow.md).
+[`docs/en/unlock-flow.md`](docs/en/unlock-flow.md) (Russian: [`docs/ru/unlock-flow.md`](docs/ru/unlock-flow.md)).
 
 ## Supported network modes
 
 Full matrix with requirements and test coverage:
-[`docs/network-modes.md`](docs/network-modes.md).
+[`docs/en/network-modes.md`](docs/en/network-modes.md) (Russian: [`docs/ru/network-modes.md`](docs/ru/network-modes.md)).
 
 | Mode | Topology | Status |
 |---|---|---|
-| A1 | Phone ⇄ laptop via USB tethering (RNDIS) | [implemented], lab-tested |
+| A1 | Phone ⇄ laptop via USB tethering (RNDIS / CDC) | [implemented], lab-tested |
 | A2 | Phone and laptop on same LAN, laptop via Ethernet | [implemented], lab-tested |
 | A3 | Laptop on phone's Wi-Fi hotspot | [implemented], lab-tested |
 | A4 | Phone and laptop on same Wi-Fi LAN | [planned] |
 | B1 | Remote via VPS, reverse SSH tunnel from laptop | [planned] — next after A3 |
 | B2 | Remote via VPS, WireGuard mesh | [planned], after B1 |
 
-Verified: 2026-08-27 — A1, A2, and A3 flows exercised end-to-end by `lab/test_unlock.py`
-(SSH into initramfs dropbear on eth0/user-net, passfifo write, VM powers off after unlock).
+Verified: 2026-08-28 — A1, A2, and A3 flows exercised end-to-end by `lab/test_unlock.py`
+and Android BouncyCastle X25519/Ed25519 provider registration.
 
 ## Repository layout
 
 ```
-android/    Phone-side app (Kotlin, Jetpack Compose, SSHJ)
-laptop/     Laptop-side installer: initramfs hooks + `unlock` CLI (Kali/Debian)
+android/    Phone-side app (Kotlin, Jetpack Compose, SSHJ, BouncyCastle)
+laptop/     Laptop-side installer: initramfs hooks + `unlock` CLI (Kali/Debian/Ubuntu)
 lab/        QEMU test lab in Docker — builds a real initramfs, unlocks a real
             LUKS disk image end-to-end, no hardware needed
-docs/       Contracts, architecture decision records, network mode matrix
+docs/       Full documentation (en/ and ru/), contracts, and ADRs
 ```
 
 ## Quick start (lab)
@@ -62,12 +64,13 @@ docker compose up -d      # builds initramfs + LUKS disk, boots QEMU VM
 - The initramfs is unencrypted by nature: any secret baked into it
   (Wi-Fi PSK, tunnel keys) must be scoped so its leak does not compromise
   the disk or other machines. Per-mode secrets are listed in
-  [`docs/network-modes.md`](docs/network-modes.md).
-- Host key pinning in the app is planned; see AGENTS.md "Known deviations".
+  [`docs/en/network-modes.md`](docs/en/network-modes.md).
+- The Android client supports custom SSH keypair import and Ed25519 generation.
 
-## Docs index
+## Documentation Index
 
-See [`AGENTS.md`](AGENTS.md) for the full documentation map and the rules
-this repository follows for keeping docs current. See
-[`docs/branching-and-releases.md`](docs/branching-and-releases.md) for branch
-management, PR policies, and release workflows.
+- 📖 [Documentation Portal (English)](docs/en/index.md) | [Портал документации (Русский)](docs/ru/index.md)
+- 💻 [Laptop Target Setup Guide](docs/en/laptop-setup.md) | [Настройка ноутбука (RU)](docs/ru/laptop-setup.md)
+- 🌐 [Network Modes Matrix](docs/en/network-modes.md) | [Матрица сетевых режимов (RU)](docs/ru/network-modes.md)
+- 🔐 [Unlock Flow Contract](docs/en/unlock-flow.md) | [Протокол разблокировки (RU)](docs/ru/unlock-flow.md)
+- 🚀 [Branching & Releases](docs/en/branching-and-releases.md) | [Ветвление и релизы (RU)](docs/ru/branching-and-releases.md)

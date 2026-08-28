@@ -1,4 +1,6 @@
-# Unlock flow contract (Android app ⇄ laptop initramfs)
+# Unlock Flow Contract (Android App ⇄ Laptop Initramfs)
+
+[ English ](unlock-flow.md) • [ Русский ](../ru/unlock-flow.md)
 
 > Single source of truth for the unlock protocol between the phone app
 > (`android/`) and the laptop's initramfs scripts (`laptop/`, built into the

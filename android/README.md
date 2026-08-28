@@ -8,7 +8,7 @@ Verified: never (build verified only in CI)
 ## TL;DR
 
 Jetpack Compose UI, SSHJ for SSH, multi-interface subnet scanner for discovery.
-Talks the protocol documented in `../docs/unlock-flow.md`. Supports local modes
+Talks the protocol documented in `../docs/en/unlock-flow.md` (Russian: `../docs/ru/unlock-flow.md`). Supports local modes
 A1 (USB tethering), A2 (LAN / Ethernet), and A3 (Wi-Fi hotspot).
 
 ## Build & Test
@@ -25,7 +25,7 @@ cd android
 CI runs unit tests and builds the debug APK on every push/PR to main
 (`.github/workflows/android-build.yml`). Tagged releases trigger automated
 signing and publication to GitHub Releases
-(`.github/workflows/release.yml`; see `../docs/branching-and-releases.md`).
+(`.github/workflows/release.yml`; see `../docs/en/branching-and-releases.md` / `../docs/ru/branching-and-releases.md`).
 
 ## Code map
 

@@ -57,10 +57,10 @@ The entrypoint supervisor loop watches for marker files in `data/`:
 3. The `local-top` watcher waits on `/lib/cryptsetup/passfifo`; on valid
    passphrase it opens `/dev/mapper/test_crypt` and powers the VM off —
    that poweroff IS the current success signal (see
-   `../docs/unlock-flow.md` for the contract the app must follow).
+   `../docs/en/unlock-flow.md` for the contract the app must follow).
 
 ## Planned
 
 - Fake "VPS" service (sshd / wireguard containers) in the same compose
   network to test modes B1/B2 offline — see
-  `../docs/network-modes.md`.
+  `../docs/en/network-modes.md`.

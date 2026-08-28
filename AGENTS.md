@@ -28,9 +28,10 @@ docs/       Cross-component contracts, architecture decisions (ADR), release wor
 
 | Question | Document |
 |---|---|
-| How do the app and initramfs talk? Protocol details | `docs/unlock-flow.md` |
-| How are branches, PRs, and releases managed? | `docs/branching-and-releases.md` |
-| Which network topologies are supported / planned? | `docs/network-modes.md` |
+| How do the app and initramfs talk? Protocol details | `docs/en/unlock-flow.md` (RU: `docs/ru/unlock-flow.md`) |
+| How are branches, PRs, and releases managed? | `docs/en/branching-and-releases.md` (RU: `docs/ru/branching-and-releases.md`) |
+| Which network topologies are supported / planned? | `docs/en/network-modes.md` (RU: `docs/ru/network-modes.md`) |
+| How to configure the target laptop? | `docs/en/laptop-setup.md` (RU: `docs/ru/laptop-setup.md`) |
 | Why Wi-Fi and not Bluetooth in initramfs? | `docs/adr/0001-wifi-not-bluetooth-in-initramfs.md` |
 | Why both reverse SSH and WireGuard for remote unlock? | `docs/adr/0002-dual-transport-revssh-plus-wireguard.md` |
 | Why passfifo instead of other unlock mechanisms? | `docs/adr/0003-luks-unlock-via-passfifo.md` |
@@ -63,9 +64,11 @@ cd android && ./gradlew assembleDebug   # CI does the same; output in app/build/
 Update documentation **in the same change** as the code:
 
 1. Changed anything about the unlock protocol (passfifo paths, success
-   criteria, key formats, ports) → update `docs/unlock-flow.md`.
+   criteria, key formats, ports) → update `docs/en/unlock-flow.md` and `docs/ru/unlock-flow.md`.
 2. Changed network topology support or added a mode → update
-   `docs/network-modes.md` matrix row.
+   `docs/en/network-modes.md` and `docs/ru/network-modes.md` matrix rows.
+3. Changed laptop setup or initramfs hooks → update
+   `docs/en/laptop-setup.md` and `docs/ru/laptop-setup.md`.
 3. Made an architectural choice where alternatives were rejected → add
    `docs/adr/NNNN-short-name.md`. ADRs are immutable; supersede, don't edit.
 4. Changed build/run/test steps of a component → update that component's

@@ -44,6 +44,6 @@ Negative / accepted risks:
 - **Writing to the fifo succeeds even if the passphrase is wrong.** The
   watcher loops and waits again. Therefore "bytes delivered" MUST NOT be
   treated as "disk unlocked" — clients must confirm success separately
-  (see `docs/unlock-flow.md`, Success criteria).
+  (see `../en/unlock-flow.md`, Success criteria).
 - FIFO paths differ between setups (`/lib/cryptsetup` vs `/run/cryptsetup`);
   clients must try both.

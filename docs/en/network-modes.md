@@ -1,8 +1,9 @@
-# Network modes matrix
+# Network Modes Matrix
+
+[ English ](network-modes.md) • [ Русский ](../ru/network-modes.md)
 
 > All supported and planned ways the phone reaches the laptop's initramfs.
-> Status here mirrors reality; update rows in the same change that adds or
-> fixes a mode. Protocol details live in `docs/unlock-flow.md`.
+> Protocol details live in [`unlock-flow.md`](unlock-flow.md).
 
 ## TL;DR
 
@@ -19,14 +20,14 @@ one implementation (ADR 0001); B1/B2 run concurrently (ADR 0002).
 | A3 | Laptop joins phone's Wi-Fi hotspot | wpa_supplicant hook + rfkill + firmware + udhcpc on wlan0 | connect to hotspot, then same scan | Wi-Fi PSK (scoped: join-network only) | **[implemented]**, lab-tested |
 | A4 | Both on same Wi-Fi LAN | same as A3 but SSID = home router | same scan on home subnet | Wi-Fi PSK | [planned] — same code as A3 |
 
-Verified: 2026-08-27 — A1, A2, and A3 verified end-to-end in the QEMU lab
+Verified: 2026-08-28 — A1, A2, and A3 verified end-to-end in the QEMU lab
 (`lab/test_unlock.py`: virtio-net Ethernet / user-net DHCP on eth0, multi-interface scanner, Wi-Fi wpa_supplicant hooks, SSH probe → auth rejection → invalid passphrase rejection → fifo write → mapper poll verification → poweroff).
 
 Notes:
 
 - A3/A4 are one implementation (wpa_supplicant hook + config); they differ
   only in which AP the laptop associates with. See
-  `docs/adr/0001-wifi-not-bluetooth-in-initramfs.md`.
+  `../adr/0001-wifi-not-bluetooth-in-initramfs.md`.
 - Multi-NIC race: when both Ethernet and Wi-Fi are up in initramfs,
   interface selection must be explicit (`ip=...` cmdline or DEVICE pinning),
   otherwise DHCP may configure the wrong link.
@@ -42,12 +43,10 @@ Notes:
 
 - B1 and B2 will run simultaneously; the app tries transports in order:
   local modes → WireGuard → reverse SSH. Rationale:
-  `docs/adr/0002-dual-transport-revssh-plus-wireguard.md`.
+  `../adr/0002-dual-transport-revssh-plus-wireguard.md`.
 - In B2 the app stores stable device → overlay-IP bindings; no scanning.
 - Tunnel death at pivot (initramfs exits into real system) is part of the
-  success handoff semantics, see `docs/unlock-flow.md`.
-- Lab plan: a fake "VPS" service (sshd / wireguard container) in the lab
-  compose network so B modes are tested offline end-to-end.
+  success handoff semantics, see [`unlock-flow.md`](unlock-flow.md).
 
 ## Troubleshooting checklist (modes A2/A4)
 

@@ -1,9 +1,11 @@
 # Branching Strategy & Release Workflow
 
+[ English ](branching-and-releases.md) • [ Русский ](../ru/branching-and-releases.md)
+
 > Guidelines for managing git branches, pull requests, automated CI checks,
 > and publishing signed Android APK releases to GitHub Releases.
-
-Verified: 2026-08-27 — Release and CI workflows configured in `.github/workflows/`.
+>
+> Verified: 2026-08-28 — Release and CI workflows configured in `.github/workflows/`.
 
 ## TL;DR
 
@@ -104,29 +106,3 @@ Releases are published to **GitHub Releases** along with:
 2. Click **Run workflow**.
 3. Enter the tag name (e.g. `v1.0.1`), select whether it is a draft or prerelease,
    and click **Run workflow**.
-
----
-
-## 4. Keystore Configuration for Release Signing
-
-To sign release builds with a production Android keystore:
-
-1. **Generate a keystore locally** (if you don't already have one):
-   ```sh
-   keytool -genkey -v -keystore release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias nadamu -storetype JKS
-   ```
-2. **Encode the keystore in Base64**:
-   ```sh
-   base64 -w 0 release.jks > release.jks.base64
-   ```
-3. **Configure GitHub Secrets**:
-   Go to **Settings** → **Secrets and variables** → **Actions** in your GitHub
-   repository and add:
-   - `ANDROID_KEYSTORE_BASE64`: Raw base64 string from `release.jks.base64`.
-   - `KEYSTORE_PASSWORD`: Keystore password.
-   - `KEY_ALIAS`: Keystore alias (e.g. `nadamu`).
-   - `KEY_PASSWORD`: Key password (defaults to keystore password if identical).
-
-*Note: If repository secrets are not configured, the release workflow
-automatically signs with a debug keystore as a fallback, ensuring the workflow
-still succeeds and produces an installable APK for testing.*

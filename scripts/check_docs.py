@@ -29,18 +29,18 @@ TRIGGER_RULES = [
     {
         "name": "unlock protocol (android app)",
         "code": ["android/app/src/**"],
-        "docs": ["docs/unlock-flow.md"],
+        "docs": ["docs/en/unlock-flow.md", "docs/ru/unlock-flow.md"],
     },
     {
         "name": "network modes / lab topologies",
         "code": ["lab/**/*.sh", "lab/Containerfile", "lab/compose.yml",
                  "lab/*.py"],
-        "docs": ["docs/network-modes.md"],
+        "docs": ["docs/en/network-modes.md", "docs/ru/network-modes.md"],
     },
     {
         "name": "laptop install / initramfs hooks",
         "code": ["laptop/**"],
-        "docs": ["docs/unlock-flow.md"],
+        "docs": ["docs/en/unlock-flow.md", "docs/ru/unlock-flow.md", "docs/en/laptop-setup.md", "docs/ru/laptop-setup.md"],
     },
 ]
 
