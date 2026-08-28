@@ -90,13 +90,38 @@ class KeyManager(private val context: Context) {
         }
 
         /**
-         * Derive OpenSSH public key string from any standard private key format supported by SSHJ
-         * (PKCS#8, OpenSSH, RSA, Ed25519, ECDSA).
+         * Derive OpenSSH public key string from any standard private key format supported
+         * (PKCS#8 PEM, OpenSSL PEM, OpenSSH, RSA, Ed25519, ECDSA).
          */
         fun deriveOpenSshPublicKey(privateKeyRaw: String, comment: String = DEFAULT_COMMENT): String {
             initBouncyCastle()
+            val trimmed = privateKeyRaw.trim()
+
+            // 1. Try BouncyCastle PEMParser for standard PKCS#8 and OpenSSL PEM keys
+            try {
+                java.io.StringReader(trimmed).use { reader ->
+                    val pemParser = org.bouncycastle.openssl.PEMParser(reader)
+                    val parsedObj = pemParser.readObject()
+                    if (parsedObj is PrivateKeyInfo) {
+                        val privParams = org.bouncycastle.crypto.util.PrivateKeyFactory.createKey(parsedObj)
+                        if (privParams is Ed25519PrivateKeyParameters) {
+                            val pubParams = privParams.generatePublicKey()
+                            return encodeEd25519PublicKeyToOpenSsh(pubParams.encoded, comment)
+                        }
+                    } else if (parsedObj is org.bouncycastle.openssl.PEMKeyPair) {
+                        val converter = org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter().setProvider(BouncyCastleProvider.PROVIDER_NAME)
+                        val jcaPair = converter.getKeyPair(parsedObj)
+                        val pubKey = jcaPair.public
+                        val buffer = Buffer.PlainBuffer().putPublicKey(pubKey)
+                        val b64 = Base64.getEncoder().encodeToString(buffer.compactData)
+                        return "${KeyType.fromKey(pubKey)} $b64 $comment"
+                    }
+                }
+            } catch (_: Exception) {}
+
+            // 2. Fallback to SSHJ loader for OpenSSH wire/PuTTY formats
             val ssh = SSHClient()
-            val kp = ssh.loadKeys(privateKeyRaw.trim(), null, null)
+            val kp = ssh.loadKeys(trimmed, null, null)
             val pub = kp.public
             val keyType = KeyType.fromKey(pub).toString()
             val buffer = Buffer.PlainBuffer().putPublicKey(pub)
