@@ -57,7 +57,7 @@
 | `rfkill` | Утилита для снятия программной и аппаратной блокировки беспроводных модулей. |
 | `iw` | Утилита для настройки и проверки беспроводных интерфейсов. |
 
-Установка всех зависимостей вручную:
+Установка всех зависимостей:
 ```sh
 sudo apt-get update
 sudo apt-get install -y dropbear-initramfs cryptsetup-initramfs busybox wpasupplicant rfkill iw
@@ -71,50 +71,48 @@ sudo apt-get install -y dropbear-initramfs cryptsetup-initramfs busybox wpasuppl
 
 **Суть режима:** Ноутбук подключается к телефону обычным кабелем Type-C. На телефоне включается тумблер **«USB-модем» (USB Tethering)**. Телефон выступает в роли роутера и DHCP-сервера для ноутбука.
 
-1. **Добавление сетевых модулей ядра:**
-   Откройте `/etc/initramfs-tools/modules` и добавьте драйверы USB-сети:
-   ```
-   rndis_host
-   cdc_ether
-   cdc_ncm
-   usbnet
-   ```
-   *Пояснение:* `rndis_host` отвечает за RNDIS-модемы Android; `cdc_ether` и `cdc_ncm` поддерживают стандартные CDC USB-Ethernet адаптеры.
+#### Шаг 1. Добавление сетевых модулей ядра
+Откройте `/etc/initramfs-tools/modules` и добавьте драйверы USB-сети:
+```conf
+rndis_host
+cdc_ether
+cdc_ncm
+usbnet
+```
+*Пояснение:* `rndis_host` отвечает за RNDIS-модемы Android; `cdc_ether` и `cdc_ncm` поддерживают стандартные CDC USB-Ethernet адаптеры.
 
-2. **Включение сети и Dropbear в initramfs:**
-   В файле `/etc/initramfs-tools/initramfs.conf` укажите:
-   ```conf
-   DROPBEAR=y
-   IP=dhcp
-   ```
+#### Шаг 2. Включение сети и Dropbear в initramfs
+В файле `/etc/initramfs-tools/initramfs.conf` укажите:
+```conf
+DROPBEAR=y
+IP=dhcp
+```
 
-3. **Настройка безопасности Dropbear (Только вход по ключам):**
-   В файле `/etc/dropbear-initramfs/config` (или `/etc/dropbear/initramfs/dropbear.conf`):
-   ```conf
-   DROPBEAR_OPTIONS="-p 22 -s -j -k -E"
-   ```
-   *Разбор флагов:*
-   - `-p 22`: Слушать порт 22.
-   - `-s`: Запретить вход по паролю (разрешить только SSH-ключи).
-   - `-j`: Запретить локальный проброс портов (local port forwarding).
-   - `-k`: Запретить удалённый проброс портов (remote port forwarding).
-   - `-E`: Направлять логи ошибок в стандартный поток вывода / syslog.
+#### Шаг 3. Настройка безопасности Dropbear (Только вход по ключам)
+В файле `/etc/dropbear-initramfs/config` (или `/etc/dropbear/initramfs/dropbear.conf`):
+```conf
+DROPBEAR_OPTIONS="-p 22 -s -j -k -E"
+```
+*Разбор флагов:*
+- `-p 22`: Слушать порт 22.
+- `-s`: Запретить вход по паролю (разрешить только SSH-ключи).
+- `-j`: Запретить локальный проброс портов (local port forwarding).
+- `-k`: Запретить удалённый проброс портов (remote port forwarding).
+- `-E`: Направлять логи ошибок в стандартный поток вывода / syslog.
 
-4. **Добавление публичного ключа клиента:**
-   Скопируйте строку публичного ключа из Android-приложения Nadamu и добавьте в:
-   `/etc/dropbear/initramfs/authorized_keys` (или `/etc/dropbear-initramfs/authorized_keys`).
-   Установите строгие права доступа:
-   ```sh
-   sudo chmod 600 /etc/dropbear/initramfs/authorized_keys
-   ```
+#### Шаг 4. Добавление публичного ключа клиента
+Скопируйте строку публичного ключа из Android-приложения Nadamu и добавьте в `/etc/dropbear/initramfs/authorized_keys` (или `/etc/dropbear-initramfs/authorized_keys`):
+```sh
+sudo chmod 600 /etc/dropbear/initramfs/authorized_keys
+```
 
-5. **Пересборка initramfs:**
-   ```sh
-   sudo update-initramfs -u -k all
-   ```
-   *Разбор флагов:*
-   - `-u`: Обновить существующий образ initramfs.
-   - `-k all`: Применить изменения для всех установленных версий ядра Linux.
+#### Шаг 5. Пересборка initramfs
+```sh
+sudo update-initramfs -u -k all
+```
+*Разбор флагов:*
+- `-u`: Обновить существующий образ initramfs.
+- `-k all`: Применить изменения для всех установленных версий ядра Linux.
 
 ---
 
@@ -122,13 +120,16 @@ sudo apt-get install -y dropbear-initramfs cryptsetup-initramfs busybox wpasuppl
 
 **Суть режима:** Ноутбук подключен патч-кордом к локальной сети (роутеру/свитчу), а телефон находится в той же сети (например, по Wi-Fi).
 
-1. **Модули сетевой карты:**
-   Определите драйвер вашей Ethernet-карты (через `lspci -k` или `lsmod | grep -E "r8169|e1000e|tg3|igb"`).
-   Добавьте имя драйвера (например, `r8169`, `e1000e`, `virtio_net`) в `/etc/initramfs-tools/modules`.
+#### Шаг 1. Модули сетевой карты
+Определите драйвер вашей Ethernet-карты (через `lspci -k` или `lsmod | grep -E "r8169|e1000e|tg3|igb"`).
+Добавьте имя драйвера (например, `r8169`, `e1000e`, `virtio_net`) в `/etc/initramfs-tools/modules`.
 
-2. **Конфигурация:**
-   Параметры `IP=dhcp`, опции Dropbear (`-p 22 -s -j -k -E`) и файл `authorized_keys` настраиваются так же, как в A1.
-   Примените: `sudo update-initramfs -u -k all`.
+#### Шаг 2. Конфигурация и сборка
+Параметры `IP=dhcp`, опции Dropbear (`-p 22 -s -j -k -E`) и файл `authorized_keys` настраиваются так же, как в A1.
+Примените изменения:
+```sh
+sudo update-initramfs -u -k all
+```
 
 ---
 
@@ -136,36 +137,36 @@ sudo apt-get install -y dropbear-initramfs cryptsetup-initramfs busybox wpasuppl
 
 **Суть режима:** На телефоне включается раздача Wi-Fi (Точка доступа). При включении ноутбука initramfs активирует Wi-Fi карту, подключается к точке доступа телефона, получает IP и запускает Dropbear.
 
-1. **Модули ядра для беспроводной связи:**
-   Добавьте в `/etc/initramfs-tools/modules`:
-   ```
-   cfg80211
-   mac80211
-   rfkill
-   ```
-   *(Убедитесь, что драйвер вашей Wi-Fi карты, например `iwlwifi`, `ath9k`, `rtw88`, также загружается).*
+#### Шаг 1. Модули ядра для беспроводной связи
+Добавьте в `/etc/initramfs-tools/modules`:
+```conf
+cfg80211
+mac80211
+rfkill
+```
+*(Убедитесь, что драйвер вашей Wi-Fi карты, например `iwlwifi`, `ath9k`, `rtw88`, также загружается).*
 
-2. **Сохранение учётных данных точки доступа:**
-   Создайте файл `/etc/nadamu/wifi/wpa_supplicant.conf`:
-   ```conf
-   ctrl_interface=/run/wpa_supplicant
-   update_config=1
+#### Шаг 2. Сохранение учётных данных точки доступа
+Создайте файл конфигурации `/etc/nadamu/wifi/wpa_supplicant.conf`:
+```sh
+sudo mkdir -p /etc/nadamu/wifi
+sudo tee /etc/nadamu/wifi/wpa_supplicant.conf > /dev/null << 'EOF'
+ctrl_interface=/run/wpa_supplicant
+update_config=1
 
-   network={
-       ssid="ИМЯ_ТОЧКИ_ДОСТУПА_ТЕЛЕФОНА"
-       psk="ПАРОЛЬ_ТОЧКИ_ДОСТУПА"
-       key_mgmt=WPA-PSK
-   }
-   ```
-   Ограничьте права:
-   ```sh
-   sudo chmod 600 /etc/nadamu/wifi/wpa_supplicant.conf
-   ```
+network={
+    ssid="ИМЯ_ТОЧКИ_ДОСТУПА_ТЕЛЕФОНА"
+    psk="ПАРОЛЬ_ТОЧКИ_ДОСТУПА"
+    key_mgmt=WPA-PSK
+}
+EOF
+sudo chmod 600 /etc/nadamu/wifi/wpa_supplicant.conf
+```
 
-3. **Создание хука для включения Wi-Fi в initramfs (`/etc/initramfs-tools/hooks/nadamu_wifi`):**
-   Этот хук копирует бинарники `wpa_supplicant`, `iw`, `rfkill`, регуляторную базу (`regulatory.db`) и сохранённый конфиг сети внутрь временного образа initramfs:
-   ```sh
-   sudo tee /etc/initramfs-tools/hooks/nadamu_wifi > /dev/null << 'EOF'
+#### Шаг 3. Создание хука сборки initramfs (`nadamu_wifi`)
+Этот хук копирует бинарники `wpa_supplicant`, `iw`, `rfkill`, регуляторную базу (`regulatory.db`) и сохранённый конфиг сети внутрь временного образа initramfs:
+```sh
+sudo tee /etc/initramfs-tools/hooks/nadamu_wifi > /dev/null << 'EOF'
 #!/bin/sh
 set -e
 
@@ -203,13 +204,13 @@ done
 
 exit 0
 EOF
-   sudo chmod +x /etc/initramfs-tools/hooks/nadamu_wifi
-   ```
+sudo chmod +x /etc/initramfs-tools/hooks/nadamu_wifi
+```
 
-4. **Создание скрипта автоподключения Wi-Fi при загрузке (`/etc/initramfs-tools/scripts/init-premount/nadamu_wifi_up`):**
-   Этот скрипт запускается ядром на стадии `init-premount`, находит активный Wi-Fi интерфейс, снимает блокировку `rfkill`, подключается к хотспоту и запрашивает IP по DHCP:
-   ```sh
-   sudo tee /etc/initramfs-tools/scripts/init-premount/nadamu_wifi_up > /dev/null << 'EOF'
+#### Шаг 4. Создание загрузочного скрипта автоподключения (`nadamu_wifi_up`)
+Этот скрипт запускается ядром на стадии `init-premount`, находит активный Wi-Fi интерфейс, снимает блокировку `rfkill`, подключается к хотспоту и запрашивает IP по DHCP:
+```sh
+sudo tee /etc/initramfs-tools/scripts/init-premount/nadamu_wifi_up > /dev/null << 'EOF'
 #!/bin/sh
 PREREQ="udev"
 prereqs() { echo "$PREREQ"; }
@@ -265,25 +266,25 @@ echo "[nadamu-wifi] Requesting DHCP lease on $WLAN_IF..."
 udhcpc -i "$WLAN_IF" -n -q -t 5 2>/dev/null || true
 exit 0
 EOF
-   sudo chmod +x /etc/initramfs-tools/scripts/init-premount/nadamu_wifi_up
-   ```
+sudo chmod +x /etc/initramfs-tools/scripts/init-premount/nadamu_wifi_up
+```
 
-   *Разбор ключевых команд:*
-   - `wpa_supplicant -B -i "$WLAN_IF" -c "$CONF" -P /run/wpa_supplicant.pid`:
-     - `-B`: Фоновый режим демона (background).
-     - `-i <iface>`: Имя беспроводного интерфейса (например, `wlan0` или `wlp2s0`).
-     - `-c <path>`: Путь к файлу конфигурации внутри initramfs.
-     - `-P <pidfile>`: Файл для сохранения PID процесса.
-   - `udhcpc -i "$WLAN_IF" -n -q -t 5`:
-     - `-i <iface>`: Целевой сетевой интерфейс.
-     - `-n`: Не зависать, если адрес не получен (неблокирующий режим).
-     - `-q`: Завершить работу сразу после успешного получения аренды адреса.
-     - `-t 5`: Отправить до 5 запросов Discover перед выходом.
+*Разбор ключевых команд:*
+- `wpa_supplicant -B -i "$WLAN_IF" -c "$CONF" -P /run/wpa_supplicant.pid`:
+  - `-B`: Фоновый режим демона (background).
+  - `-i <iface>`: Имя беспроводного интерфейса (например, `wlan0` или `wlp2s0`).
+  - `-c <path>`: Путь к файлу конфигурации внутри initramfs.
+  - `-P <pidfile>`: Файл для сохранения PID процесса.
+- `udhcpc -i "$WLAN_IF" -n -q -t 5`:
+  - `-i <iface>`: Целевой сетевой интерфейс.
+  - `-n`: Не зависать, если адрес не получен (неблокирующий режим).
+  - `-q`: Завершить работу сразу после успешного получения аренды адреса.
+  - `-t 5`: Отправить до 5 запросов Discover перед выходом.
 
-5. **Пересборка initramfs:**
-   ```sh
-   sudo update-initramfs -u -k all
-   ```
+#### Шаг 5. Пересборка initramfs
+```sh
+sudo update-initramfs -u -k all
+```
 
 ---
 
@@ -298,7 +299,7 @@ EOF
 
 ## 4. Автоматическая установка через скрипт
 
-Чтобы выполнить все вышеперечисленные шаги одной командой, используйте готовый скрипт:
+Чтобы выполнить все вышеперечисленные шаги одной командой, используйте готовый скрипт из репозитория:
 
 ```sh
 sudo ./install.sh
