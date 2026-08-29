@@ -162,29 +162,123 @@ sudo apt-get install -y dropbear-initramfs cryptsetup-initramfs busybox wpasuppl
    sudo chmod 600 /etc/nadamu/wifi/wpa_supplicant.conf
    ```
 
-3. **Initramfs-хук (`/etc/initramfs-tools/hooks/nadamu_wifi`):**
-   Упаковывает бинарники `wpa_supplicant`, `iw`, `rfkill`, регуляторную базу (`regulatory.db`) и конфиг в initrd.
-
-4. **Скрипт запуска Wi-Fi (`/etc/initramfs-tools/scripts/init-premount/nadamu_wifi_up`):**
-   Разблокирует адаптер через `rfkill unblock wifi`, поднимает интерфейс и подключается к сети:
+3. **Создание хука для включения Wi-Fi в initramfs (`/etc/initramfs-tools/hooks/nadamu_wifi`):**
+   Этот хук копирует бинарники `wpa_supplicant`, `iw`, `rfkill`, регуляторную базу (`regulatory.db`) и сохранённый конфиг сети внутрь временного образа initramfs:
    ```sh
-   wpa_supplicant -B -i "$WLAN_IF" -c /etc/wpa_supplicant/wpa_supplicant.conf -P /run/wpa_supplicant.pid
-   ```
-   *Разбор флагов:*
-   - `-B`: Фоновый режим демона (background).
-   - `-i <iface>`: Имя беспроводного интерфейса (например, `wlan0`).
-   - `-c <path>`: Путь к файлу конфигурации.
-   - `-P <pidfile>`: Файл для сохранения PID процесса.
+   sudo tee /etc/initramfs-tools/hooks/nadamu_wifi > /dev/null << 'EOF'
+#!/bin/sh
+set -e
 
-   Затем запрашивает IP-адрес по DHCP:
-   ```sh
-   udhcpc -i "$WLAN_IF" -n -q -t 5
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0;; esac
+
+. /usr/share/initramfs-tools/hook-functions
+
+# Копирование wpa_supplicant и беспроводных утилит
+if command -v wpa_supplicant >/dev/null 2>&1; then
+    copy_exec /sbin/wpa_supplicant /sbin/wpa_supplicant 2>/dev/null || copy_exec /usr/sbin/wpa_supplicant /sbin/wpa_supplicant
+fi
+if command -v rfkill >/dev/null 2>&1; then
+    copy_exec /sbin/rfkill /sbin/rfkill 2>/dev/null || copy_exec /usr/sbin/rfkill /sbin/rfkill
+fi
+if command -v iw >/dev/null 2>&1; then
+    copy_exec /sbin/iw /sbin/iw 2>/dev/null || copy_exec /usr/sbin/iw /sbin/iw
+fi
+
+# Копирование конфига точки доступа
+if [ -f /etc/nadamu/wifi/wpa_supplicant.conf ]; then
+    mkdir -p "${DESTDIR}/etc/wpa_supplicant"
+    cp -f /etc/nadamu/wifi/wpa_supplicant.conf "${DESTDIR}/etc/wpa_supplicant/wpa_supplicant.conf"
+    chmod 600 "${DESTDIR}/etc/wpa_supplicant/wpa_supplicant.conf"
+fi
+
+# Копирование регуляторной базы беспроводных частот (CRDA)
+for reg in /lib/firmware/regulatory.db* /lib/crda/regulatory.bin*; do
+    if [ -f "$reg" ]; then
+        mkdir -p "${DESTDIR}$(dirname "$reg")"
+        cp -f "$reg" "${DESTDIR}$reg"
+    fi
+done
+
+exit 0
+EOF
+   sudo chmod +x /etc/initramfs-tools/hooks/nadamu_wifi
    ```
-   *Разбор флагов:*
-   - `-i <iface>`: Целевой сетевой интерфейс.
-   - `-n`: Не зависать, если адрес не получен (неблокирующий режим).
-   - `-q`: Завершить работу сразу после успешного получения аренды адреса.
-   - `-t 5`: Отправить до 5 запросов Discover перед выходом.
+
+4. **Создание скрипта автоподключения Wi-Fi при загрузке (`/etc/initramfs-tools/scripts/init-premount/nadamu_wifi_up`):**
+   Этот скрипт запускается ядром на стадии `init-premount`, находит активный Wi-Fi интерфейс, снимает блокировку `rfkill`, подключается к хотспоту и запрашивает IP по DHCP:
+   ```sh
+   sudo tee /etc/initramfs-tools/scripts/init-premount/nadamu_wifi_up > /dev/null << 'EOF'
+#!/bin/sh
+PREREQ="udev"
+prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0;; esac
+
+CONF="/etc/wpa_supplicant/wpa_supplicant.conf"
+[ -f "$CONF" ] || exit 0
+
+echo "[nadamu-wifi] Initializing wireless interface..."
+rfkill unblock wifi 2>/dev/null || rfkill unblock all 2>/dev/null || true
+
+WLAN_IF=""
+for ifpath in /sys/class/net/*; do
+    if [ -d "$ifpath/wireless" ] || [ -d "$ifpath/phy80211" ]; then
+        WLAN_IF=$(basename "$ifpath")
+        break
+    fi
+done
+
+if [ -z "$WLAN_IF" ]; then
+    for ifname in wlan0 wlan1 wlp2s0 wlp3s0 wlo1; do
+        if [ -d "/sys/class/net/$ifname" ]; then
+            WLAN_IF="$ifname"
+            break
+        fi
+    done
+fi
+
+if [ -z "$WLAN_IF" ]; then
+    echo "[nadamu-wifi] No wireless interface detected."
+    exit 0
+fi
+
+echo "[nadamu-wifi] Bringing up wireless interface $WLAN_IF..."
+ip link set "$WLAN_IF" up 2>/dev/null || true
+
+mkdir -p /run /var/run
+wpa_supplicant -B -i "$WLAN_IF" -c "$CONF" -P /run/wpa_supplicant.pid 2>/dev/null || true
+
+# Ожидание установления ассоциации с точкой доступа (до 8 секунд)
+i=0
+while [ $i -lt 8 ]; do
+    if [ -f "/sys/class/net/$WLAN_IF/carrier" ] && [ "$(cat "/sys/class/net/$WLAN_IF/carrier" 2>/dev/null)" = "1" ]; then
+        echo "[nadamu-wifi] Wi-Fi associated on $WLAN_IF."
+        break
+    fi
+    sleep 1
+    i=$((i + 1))
+done
+
+# Получение IP-адреса через DHCP
+echo "[nadamu-wifi] Requesting DHCP lease on $WLAN_IF..."
+udhcpc -i "$WLAN_IF" -n -q -t 5 2>/dev/null || true
+exit 0
+EOF
+   sudo chmod +x /etc/initramfs-tools/scripts/init-premount/nadamu_wifi_up
+   ```
+
+   *Разбор ключевых команд:*
+   - `wpa_supplicant -B -i "$WLAN_IF" -c "$CONF" -P /run/wpa_supplicant.pid`:
+     - `-B`: Фоновый режим демона (background).
+     - `-i <iface>`: Имя беспроводного интерфейса (например, `wlan0` или `wlp2s0`).
+     - `-c <path>`: Путь к файлу конфигурации внутри initramfs.
+     - `-P <pidfile>`: Файл для сохранения PID процесса.
+   - `udhcpc -i "$WLAN_IF" -n -q -t 5`:
+     - `-i <iface>`: Целевой сетевой интерфейс.
+     - `-n`: Не зависать, если адрес не получен (неблокирующий режим).
+     - `-q`: Завершить работу сразу после успешного получения аренды адреса.
+     - `-t 5`: Отправить до 5 запросов Discover перед выходом.
 
 5. **Пересборка initramfs:**
    ```sh

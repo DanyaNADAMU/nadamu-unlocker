@@ -157,29 +157,123 @@ sudo apt-get install -y dropbear-initramfs cryptsetup-initramfs busybox wpasuppl
    sudo chmod 600 /etc/nadamu/wifi/wpa_supplicant.conf
    ```
 
-3. **Initramfs Hook (`/etc/initramfs-tools/hooks/nadamu_wifi`):**
-   Copies `wpa_supplicant`, `iw`, `rfkill`, regulatory database, and `wpa_supplicant.conf` into the initramfs image.
-
-4. **Initramfs Premount Script (`/etc/initramfs-tools/scripts/init-premount/nadamu_wifi_up`):**
-   Unblocks wireless devices with `rfkill unblock wifi`, brings up the interface, connects via `wpa_supplicant`:
+3. **Create Initramfs Wi-Fi Hook (`/etc/initramfs-tools/hooks/nadamu_wifi`):**
+   This hook copies `wpa_supplicant`, `iw`, `rfkill`, wireless regulatory databases (`regulatory.db`), and the saved configuration into the initramfs image:
    ```sh
-   wpa_supplicant -B -i "$WLAN_IF" -c /etc/wpa_supplicant/wpa_supplicant.conf -P /run/wpa_supplicant.pid
-   ```
-   *Explanation of flags:*
-   - `-B`: Run in daemon / background mode.
-   - `-i <iface>`: Specify wireless network interface (e.g., `wlan0`).
-   - `-c <path>`: Path to configuration file.
-   - `-P <pidfile>`: Save process ID to file.
+   sudo tee /etc/initramfs-tools/hooks/nadamu_wifi > /dev/null << 'EOF'
+#!/bin/sh
+set -e
 
-   Then acquires DHCP address via BusyBox `udhcpc`:
-   ```sh
-   udhcpc -i "$WLAN_IF" -n -q -t 5
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0;; esac
+
+. /usr/share/initramfs-tools/hook-functions
+
+# Copy wpa_supplicant and wireless utilities
+if command -v wpa_supplicant >/dev/null 2>&1; then
+    copy_exec /sbin/wpa_supplicant /sbin/wpa_supplicant 2>/dev/null || copy_exec /usr/sbin/wpa_supplicant /sbin/wpa_supplicant
+fi
+if command -v rfkill >/dev/null 2>&1; then
+    copy_exec /sbin/rfkill /sbin/rfkill 2>/dev/null || copy_exec /usr/sbin/rfkill /sbin/rfkill
+fi
+if command -v iw >/dev/null 2>&1; then
+    copy_exec /sbin/iw /sbin/iw 2>/dev/null || copy_exec /usr/sbin/iw /sbin/iw
+fi
+
+# Copy wpa_supplicant config if present
+if [ -f /etc/nadamu/wifi/wpa_supplicant.conf ]; then
+    mkdir -p "${DESTDIR}/etc/wpa_supplicant"
+    cp -f /etc/nadamu/wifi/wpa_supplicant.conf "${DESTDIR}/etc/wpa_supplicant/wpa_supplicant.conf"
+    chmod 600 "${DESTDIR}/etc/wpa_supplicant/wpa_supplicant.conf"
+fi
+
+# Copy wireless regulatory DB (CRDA)
+for reg in /lib/firmware/regulatory.db* /lib/crda/regulatory.bin*; do
+    if [ -f "$reg" ]; then
+        mkdir -p "${DESTDIR}$(dirname "$reg")"
+        cp -f "$reg" "${DESTDIR}$reg"
+    fi
+done
+
+exit 0
+EOF
+   sudo chmod +x /etc/initramfs-tools/hooks/nadamu_wifi
    ```
-   *Explanation of flags:*
-   - `-i <iface>`: Target interface.
-   - `-n`: Exit immediately if lease is not obtained (non-blocking).
-   - `-q`: Quit immediately after obtaining a valid DHCP lease.
-   - `-t 5`: Send up to 5 DHCP discover packets.
+
+4. **Create Initramfs Premount Script (`/etc/initramfs-tools/scripts/init-premount/nadamu_wifi_up`):**
+   This script runs at `init-premount` time during boot. It unblocks wireless devices via `rfkill unblock wifi`, brings up the interface, connects to the hotspot, and requests DHCP:
+   ```sh
+   sudo tee /etc/initramfs-tools/scripts/init-premount/nadamu_wifi_up > /dev/null << 'EOF'
+#!/bin/sh
+PREREQ="udev"
+prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0;; esac
+
+CONF="/etc/wpa_supplicant/wpa_supplicant.conf"
+[ -f "$CONF" ] || exit 0
+
+echo "[nadamu-wifi] Initializing wireless interface..."
+rfkill unblock wifi 2>/dev/null || rfkill unblock all 2>/dev/null || true
+
+WLAN_IF=""
+for ifpath in /sys/class/net/*; do
+    if [ -d "$ifpath/wireless" ] || [ -d "$ifpath/phy80211" ]; then
+        WLAN_IF=$(basename "$ifpath")
+        break
+    fi
+done
+
+if [ -z "$WLAN_IF" ]; then
+    for ifname in wlan0 wlan1 wlp2s0 wlp3s0 wlo1; do
+        if [ -d "/sys/class/net/$ifname" ]; then
+            WLAN_IF="$ifname"
+            break
+        fi
+    done
+fi
+
+if [ -z "$WLAN_IF" ]; then
+    echo "[nadamu-wifi] No wireless interface detected."
+    exit 0
+fi
+
+echo "[nadamu-wifi] Bringing up wireless interface $WLAN_IF..."
+ip link set "$WLAN_IF" up 2>/dev/null || true
+
+mkdir -p /run /var/run
+wpa_supplicant -B -i "$WLAN_IF" -c "$CONF" -P /run/wpa_supplicant.pid 2>/dev/null || true
+
+# Wait for association (up to 8 seconds)
+i=0
+while [ $i -lt 8 ]; do
+    if [ -f "/sys/class/net/$WLAN_IF/carrier" ] && [ "$(cat "/sys/class/net/$WLAN_IF/carrier" 2>/dev/null)" = "1" ]; then
+        echo "[nadamu-wifi] Wi-Fi associated on $WLAN_IF."
+        break
+    fi
+    sleep 1
+    i=$((i + 1))
+done
+
+# Acquire DHCP lease on wireless interface
+echo "[nadamu-wifi] Requesting DHCP lease on $WLAN_IF..."
+udhcpc -i "$WLAN_IF" -n -q -t 5 2>/dev/null || true
+exit 0
+EOF
+   sudo chmod +x /etc/initramfs-tools/scripts/init-premount/nadamu_wifi_up
+   ```
+
+   *Command Breakdown:*
+   - `wpa_supplicant -B -i "$WLAN_IF" -c "$CONF" -P /run/wpa_supplicant.pid`:
+     - `-B`: Run in daemon / background mode.
+     - `-i <iface>`: Specify wireless interface (e.g., `wlan0`, `wlp2s0`).
+     - `-c <path>`: Path to configuration file inside initramfs.
+     - `-P <pidfile>`: Save process ID to file.
+   - `udhcpc -i "$WLAN_IF" -n -q -t 5`:
+     - `-i <iface>`: Target interface.
+     - `-n`: Exit immediately if lease is not obtained (non-blocking).
+     - `-q`: Quit immediately after obtaining a valid DHCP lease.
+     - `-t 5`: Send up to 5 DHCP discover packets.
 
 5. **Rebuild Initramfs:**
    ```sh
