@@ -143,8 +143,10 @@ Add wireless subsystem modules to `/etc/initramfs-tools/modules`:
 cfg80211
 mac80211
 rfkill
+iwlwifi
+iwlmvm
 ```
-*(Ensure your Wi-Fi card driver, e.g. `iwlwifi`, `ath9k`, `rtw88`, is also loaded or built-in).*
+*(Ensure your Wi-Fi card driver, e.g. `iwlwifi`, `iwlmvm`, `rtw88_8822ce`, `ath10k_pci`, `mt7921e`, is also listed).*
 
 #### Step 2. Save Hotspot Credentials
 Create the configuration file `/etc/nadamu/wifi/wpa_supplicant.conf`:
@@ -157,14 +159,25 @@ update_config=1
 network={
     ssid="YOUR_PHONE_HOTSPOT_SSID"
     psk="YOUR_PHONE_HOTSPOT_PASSWORD"
-    key_mgmt=WPA-PSK
+    key_mgmt=WPA-PSK WPA-PSK-SHA256 SAE
+    proto=RSN WPA
+    pairwise=CCMP TKIP
+    group=CCMP TKIP
+    ieee80211w=1
+    scan_ssid=1
 }
 EOF
 sudo chmod 600 /etc/nadamu/wifi/wpa_supplicant.conf
 ```
+*Crucial parameters:*
+- `ieee80211w=1` (Protected Management Frames / PMF): **mandatory for modern Android hotspots**; without PMF, the hotspot rejects association with error `status_code=31` (`ASSOC_REJECT`).
+- `key_mgmt=WPA-PSK WPA-PSK-SHA256 SAE`: supports both WPA2-Personal and WPA3-Personal.
+- `scan_ssid=1`: forces active probing for mobile / hidden hotspots.
+- If your Wi-Fi password contains special characters (`$`, `&`, `#`), pass them enclosed in single quotes `'...'` in the shell to prevent variable interpolation or backgrounding.
+- WPA-PSK passphrase length standard: **8 to 63 characters**.
 
 #### Step 3. Create Initramfs Wi-Fi Hook (`nadamu_wifi`)
-This hook copies `wpa_supplicant`, `iw`, `rfkill`, wireless regulatory databases (`regulatory.db`), and the saved configuration into the initramfs image:
+This hook copies `wpa_supplicant`, `wpa_cli`, `iw`, `rfkill`, `ip`, wireless regulatory databases (`regulatory.db`), card firmwares, and the saved configuration into the initramfs image:
 ```sh
 sudo tee /etc/initramfs-tools/hooks/nadamu_wifi > /dev/null << 'EOF'
 #!/bin/sh
@@ -176,16 +189,13 @@ case "$1" in prereqs) prereqs; exit 0;; esac
 
 . /usr/share/initramfs-tools/hook-functions
 
-# Copy wpa_supplicant and wireless utilities
-if command -v wpa_supplicant >/dev/null 2>&1; then
-    copy_exec /sbin/wpa_supplicant /sbin/wpa_supplicant 2>/dev/null || copy_exec /usr/sbin/wpa_supplicant /sbin/wpa_supplicant
-fi
-if command -v rfkill >/dev/null 2>&1; then
-    copy_exec /sbin/rfkill /sbin/rfkill 2>/dev/null || copy_exec /usr/sbin/rfkill /sbin/rfkill
-fi
-if command -v iw >/dev/null 2>&1; then
-    copy_exec /sbin/iw /sbin/iw 2>/dev/null || copy_exec /usr/sbin/iw /sbin/iw
-fi
+# Copy wireless utilities and network binaries
+for bin in wpa_supplicant wpa_cli rfkill iw ip; do
+    bin_path=$(command -v "$bin" 2>/dev/null || true)
+    if [ -n "$bin_path" ]; then
+        copy_exec "$bin_path" "$bin_path"
+    fi
+done
 
 # Copy wpa_supplicant config if present
 if [ -f /etc/nadamu/wifi/wpa_supplicant.conf ]; then
@@ -202,13 +212,21 @@ for reg in /lib/firmware/regulatory.db* /lib/crda/regulatory.bin*; do
     fi
 done
 
+# Copy wireless device firmware (Intel iwlwifi, Realtek, Atheros, MediaTek, etc.)
+for fw in /lib/firmware/iwlwifi-* /lib/firmware/intel/iwlwifi/* /lib/firmware/rtw* /lib/firmware/ath10k/* /lib/firmware/ath11k/* /lib/firmware/mediatek/*; do
+    if [ -f "$fw" ]; then
+        mkdir -p "${DESTDIR}$(dirname "$fw")"
+        cp -f "$fw" "${DESTDIR}$fw"
+    fi
+done
+
 exit 0
 EOF
 sudo chmod +x /etc/initramfs-tools/hooks/nadamu_wifi
 ```
 
 #### Step 4. Create Initramfs Premount Script (`nadamu_wifi_up`)
-This script runs at `init-premount` time during boot. It unblocks wireless devices via `rfkill unblock wifi`, brings up the interface, connects to the hotspot, and requests DHCP:
+This script runs at `init-premount` time during boot. It unblocks wireless devices via `rfkill unblock wifi`, sets country regulatory domain, brings up the interface, connects to the hotspot with live status polling, and requests DHCP:
 ```sh
 sudo tee /etc/initramfs-tools/scripts/init-premount/nadamu_wifi_up > /dev/null << 'EOF'
 #!/bin/sh
@@ -219,10 +237,11 @@ case "$1" in prereqs) prereqs; exit 0;; esac
 CONF="/etc/wpa_supplicant/wpa_supplicant.conf"
 [ -f "$CONF" ] || exit 0
 
-echo "[nadamu-wifi] Initializing wireless interface..."
+echo "[nadamu-wifi] Unblocking wireless devices..."
 rfkill unblock wifi 2>/dev/null || rfkill unblock all 2>/dev/null || true
+iw reg set RU 2>/dev/null || true
 
-WLAN_IF=""
+WLAN_IF="wlan0"
 for ifpath in /sys/class/net/*; do
     if [ -d "$ifpath/wireless" ] || [ -d "$ifpath/phy80211" ]; then
         WLAN_IF=$(basename "$ifpath")
@@ -230,36 +249,31 @@ for ifpath in /sys/class/net/*; do
     fi
 done
 
-if [ -z "$WLAN_IF" ]; then
-    for ifname in wlan0 wlan1 wlp2s0 wlp3s0 wlo1; do
-        if [ -d "/sys/class/net/$ifname" ]; then
-            WLAN_IF="$ifname"
-            break
-        fi
-    done
-fi
-
-if [ -z "$WLAN_IF" ]; then
-    echo "[nadamu-wifi] No wireless interface detected."
-    exit 0
-fi
-
-echo "[nadamu-wifi] Bringing up wireless interface $WLAN_IF..."
+echo "[nadamu-wifi] Bringing up interface $WLAN_IF..."
 ip link set "$WLAN_IF" up 2>/dev/null || true
 
-mkdir -p /run /var/run
-wpa_supplicant -B -i "$WLAN_IF" -c "$CONF" -P /run/wpa_supplicant.pid 2>/dev/null || true
+mkdir -p /run /var/run /run/wpa_supplicant
+wpa_supplicant -B -i "$WLAN_IF" -Dnl80211,wext -c "$CONF" -f /tmp/wpa.log -P /run/wpa_supplicant.pid
 
-# Wait for association (up to 8 seconds)
+echo "[nadamu-wifi] Connecting to Wi-Fi network..."
 i=0
-while [ $i -lt 8 ]; do
-    if [ -f "/sys/class/net/$WLAN_IF/carrier" ] && [ "$(cat "/sys/class/net/$WLAN_IF/carrier" 2>/dev/null)" = "1" ]; then
-        echo "[nadamu-wifi] Wi-Fi associated on $WLAN_IF."
+connected=0
+while [ $i -lt 15 ]; do
+    status=$(wpa_cli -i "$WLAN_IF" status 2>/dev/null | grep "wpa_state=" | cut -d= -f2)
+    echo "[nadamu-wifi] State ($i): ${status:-SCANNING}..."
+    if [ "$status" = "COMPLETED" ]; then
+        echo "[nadamu-wifi] Wi-Fi connected successfully!"
+        connected=1
         break
     fi
     sleep 1
     i=$((i + 1))
 done
+
+if [ $connected -eq 0 ]; then
+    echo "[nadamu-wifi] Failed to associate. Last log lines:"
+    tail -n 10 /tmp/wpa.log 2>/dev/null || true
+fi
 
 # Acquire DHCP lease on wireless interface
 echo "[nadamu-wifi] Requesting DHCP lease on $WLAN_IF..."
