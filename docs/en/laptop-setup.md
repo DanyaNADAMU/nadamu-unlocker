@@ -226,7 +226,7 @@ sudo chmod +x /etc/initramfs-tools/hooks/nadamu_wifi
 ```
 
 #### Step 4. Create Initramfs Premount Script (`nadamu_wifi_up`)
-This script runs at `init-premount` time during boot. It unblocks wireless devices via `rfkill unblock wifi`, sets country regulatory domain, brings up the interface, connects to the hotspot with live status polling, and requests DHCP:
+This script runs asynchronously at `init-premount` time: it instantly yields control to the boot process so the LUKS prompt appears with zero delay, while connecting to the hotspot and obtaining a DHCP lease in the background:
 ```sh
 sudo tee /etc/initramfs-tools/scripts/init-premount/nadamu_wifi_up > /dev/null << 'EOF'
 #!/bin/sh
@@ -237,47 +237,34 @@ case "$1" in prereqs) prereqs; exit 0;; esac
 CONF="/etc/wpa_supplicant/wpa_supplicant.conf"
 [ -f "$CONF" ] || exit 0
 
-echo "[nadamu-wifi] Unblocking wireless devices..."
-rfkill unblock wifi 2>/dev/null || rfkill unblock all 2>/dev/null || true
-iw reg set RU 2>/dev/null || true
+bg_wifi_connect() {
+    rfkill unblock wifi 2>/dev/null || rfkill unblock all 2>/dev/null || true
+    iw reg set RU 2>/dev/null || true
 
-WLAN_IF="wlan0"
-for ifpath in /sys/class/net/*; do
-    if [ -d "$ifpath/wireless" ] || [ -d "$ifpath/phy80211" ]; then
-        WLAN_IF=$(basename "$ifpath")
-        break
-    fi
-done
+    WLAN_IF="wlan0"
+    for ifpath in /sys/class/net/*; do
+        if [ -d "$ifpath/wireless" ] || [ -d "$ifpath/phy80211" ]; then
+            WLAN_IF=$(basename "$ifpath")
+            break
+        fi
+    done
 
-echo "[nadamu-wifi] Bringing up interface $WLAN_IF..."
-ip link set "$WLAN_IF" up 2>/dev/null || true
+    ip link set "$WLAN_IF" up 2>/dev/null || true
+    mkdir -p /run /var/run /run/wpa_supplicant
 
-mkdir -p /run /var/run /run/wpa_supplicant
-wpa_supplicant -B -i "$WLAN_IF" -Dnl80211,wext -c "$CONF" -f /tmp/wpa.log -P /run/wpa_supplicant.pid
+    wpa_supplicant -B -i "$WLAN_IF" -Dnl80211,wext -c "$CONF" -P /run/wpa_supplicant.pid 2>/dev/null || true
 
-echo "[nadamu-wifi] Connecting to Wi-Fi network..."
-i=0
-connected=0
-while [ $i -lt 15 ]; do
-    status=$(wpa_cli -i "$WLAN_IF" status 2>/dev/null | grep "wpa_state=" | cut -d= -f2)
-    echo "[nadamu-wifi] State ($i): ${status:-SCANNING}..."
-    if [ "$status" = "COMPLETED" ]; then
-        echo "[nadamu-wifi] Wi-Fi connected successfully!"
-        connected=1
-        break
-    fi
-    sleep 1
-    i=$((i + 1))
-done
+    for i in $(seq 1 20); do
+        if iw dev "$WLAN_IF" link 2>/dev/null | grep -q "Connected to"; then
+            udhcpc -i "$WLAN_IF" -n -q -t 5 2>/dev/null || true
+            break
+        fi
+        sleep 1
+    done
+}
 
-if [ $connected -eq 0 ]; then
-    echo "[nadamu-wifi] Failed to associate. Last log lines:"
-    tail -n 10 /tmp/wpa.log 2>/dev/null || true
-fi
-
-# Acquire DHCP lease on wireless interface
-echo "[nadamu-wifi] Requesting DHCP lease on $WLAN_IF..."
-udhcpc -i "$WLAN_IF" -n -q -t 5 2>/dev/null || true
+# Run in background for instantaneous LUKS prompt display
+bg_wifi_connect >/dev/null 2>&1 &
 exit 0
 EOF
 sudo chmod +x /etc/initramfs-tools/scripts/init-premount/nadamu_wifi_up
