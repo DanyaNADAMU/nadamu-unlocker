@@ -1,12 +1,21 @@
 package mu.nada.unlocker
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -30,18 +39,15 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
-import mu.nada.unlocker.data.DiscoveredDevice
-import mu.nada.unlocker.data.DiscoveryMode
-import mu.nada.unlocker.data.KeyManager
-import mu.nada.unlocker.data.NetworkChannel
-import mu.nada.unlocker.data.NetworkScanner
+import mu.nada.unlocker.data.*
 import mu.nada.unlocker.log.AppLogger
 import mu.nada.unlocker.log.LogLevel
 import mu.nada.unlocker.security.HostKeyManager
 import mu.nada.unlocker.security.TofuDecision
-import mu.nada.unlocker.security.TrustedHostKey
+import mu.nada.unlocker.service.UnlockForegroundService
 import mu.nada.unlocker.ssh.SshUnlocker
 import mu.nada.unlocker.ssh.UnlockResult
 
@@ -59,6 +65,12 @@ class MainActivity : ComponentActivity() {
         hostKeyManager = HostKeyManager(this)
 
         AppLogger.i("MainActivity", "Nadamu Unlocker initialized. Ready.")
+
+        // Start background service if Semi-Auto or Auto mode is active
+        val mode = hostKeyManager.getAutonomyMode()
+        if (mode == AutonomyMode.AUTO || mode == AutonomyMode.SEMI_AUTO) {
+            UnlockForegroundService.start(this)
+        }
 
         setContent {
             MaterialTheme(
@@ -127,6 +139,7 @@ fun UnlockScreen(
     var importError by remember { mutableStateOf<String?>(null) }
 
     // Settings state
+    var autonomyMode by remember { mutableStateOf(hostKeyManager.getAutonomyMode()) }
     var discoveryMode by remember { mutableStateOf(hostKeyManager.getDiscoveryMode()) }
     var channelPriority by remember { mutableStateOf(hostKeyManager.getChannelPriority()) }
     var trustedKeysList by remember { mutableStateOf(hostKeyManager.getTrustedKeys()) }
@@ -139,6 +152,44 @@ fun UnlockScreen(
     // Log filtering
     val logEvents by AppLogger.events.collectAsState()
     var selectedLogLevel by remember { mutableStateOf<LogLevel?>(LogLevel.INFO) }
+
+    // Permission launcher for Android 13+ POST_NOTIFICATIONS
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+        onResult = { isGranted ->
+            if (isGranted) {
+                AppLogger.i("UnlockScreen", "Notification permission granted.")
+            } else {
+                AppLogger.w("UnlockScreen", "Notification permission denied; notifications may not be shown.")
+            }
+        }
+    )
+
+    fun checkAndRequestPermissions(targetMode: AutonomyMode) {
+        if (targetMode != AutonomyMode.MANUAL) {
+            // Request Notification Permission on Android 13+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                    notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
+            }
+
+            // Prompt for ignoring battery optimization if not already ignored
+            val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            if (powerManager != null && !powerManager.isIgnoringBatteryOptimizations(context.packageName)) {
+                try {
+                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = Uri.parse("package:${context.packageName}")
+                    }
+                    context.startActivity(intent)
+                } catch (_: Exception) {}
+            }
+
+            UnlockForegroundService.start(context)
+        } else {
+            UnlockForegroundService.stop(context)
+        }
+    }
 
     LaunchedEffect(Unit) {
         val ifaces = scanner.getEligibleInterfaces()
@@ -238,20 +289,73 @@ fun UnlockScreen(
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Default.Settings, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Text("Settings & Security", fontWeight = FontWeight.Bold)
+                    Text("Settings & Automation", fontWeight = FontWeight.Bold)
                 }
             },
             text = {
                 Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     TabRow(selectedTabIndex = activeTab) {
-                        Tab(selected = activeTab == 0, onClick = { activeTab = 0 }, text = { Text("Network", fontSize = 12.sp) })
-                        Tab(selected = activeTab == 1, onClick = { activeTab = 1 }, text = { Text("Trusted Keys", fontSize = 12.sp) })
-                        Tab(selected = activeTab == 2, onClick = { activeTab = 2 }, text = { Text("Options", fontSize = 12.sp) })
+                        Tab(selected = activeTab == 0, onClick = { activeTab = 0 }, text = { Text("Automation", fontSize = 11.sp) })
+                        Tab(selected = activeTab == 1, onClick = { activeTab = 1 }, text = { Text("Network", fontSize = 11.sp) })
+                        Tab(selected = activeTab == 2, onClick = { activeTab = 2 }, text = { Text("Keys & Opts", fontSize = 11.sp) })
                     }
 
                     when (activeTab) {
-                        // TAB 0: Network & Channel Priority
+                        // TAB 0: Autonomy Modes
                         0 -> {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("Autonomy & Background Mode:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+
+                                AutonomyMode.values().forEach { mode ->
+                                    Card(
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = if (autonomyMode == mode) Color(0xFF1E3A5F) else Color(0xFF2A2A2A)
+                                        ),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(8.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            RadioButton(
+                                                selected = autonomyMode == mode,
+                                                onClick = {
+                                                    autonomyMode = mode
+                                                    hostKeyManager.setAutonomyMode(mode)
+                                                    checkAndRequestPermissions(mode)
+                                                }
+                                            )
+                                            Column {
+                                                Text(mode.displayName, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                                Text(mode.description, fontSize = 10.sp, color = Color.Gray)
+                                            }
+                                        }
+                                    }
+                                }
+
+                                HorizontalDivider(color = Color.DarkGray)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(Icons.Default.TouchApp, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                                    Text(
+                                        "Tip: Add the 'Unlock Laptop' tile to your Android Quick Settings (шторка) for instant 1-tap unlock.",
+                                        fontSize = 11.sp,
+                                        color = Color.LightGray
+                                    )
+                                }
+                            }
+                        }
+
+                        // TAB 1: Network & Channel Priority
+                        1 -> {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("Default Action Mode:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -276,7 +380,7 @@ fun UnlockScreen(
                                 HorizontalDivider(color = Color.DarkGray)
                                 Text("Channel Priorities & Active Channels:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
 
-                                LazyColumn(modifier = Modifier.heightIn(max = 220.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                LazyColumn(modifier = Modifier.heightIn(max = 200.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                     itemsIndexed(channelPriority) { index, channel ->
                                         val isEnabled = hostKeyManager.isChannelEnabled(channel)
                                         Row(
@@ -339,15 +443,15 @@ fun UnlockScreen(
                             }
                         }
 
-                        // TAB 1: Device-Centric Trusted Keys
-                        1 -> {
+                        // TAB 2: Device-Centric Trusted Keys & Advanced Options
+                        2 -> {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("Trusted Laptop Fingerprints:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Text("Trusted Fingerprints:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                     TextButton(onClick = { showAddKeyDialog = true }) {
                                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                                         Spacer(modifier = Modifier.width(4.dp))
@@ -358,25 +462,25 @@ fun UnlockScreen(
                                 if (trustedKeysList.isEmpty()) {
                                     Text(
                                         "No trusted laptop keys pinned yet. The host key will be saved on your first unlock via TOFU.",
-                                        fontSize = 12.sp,
+                                        fontSize = 11.sp,
                                         color = Color.Gray
                                     )
                                 } else {
-                                    LazyColumn(modifier = Modifier.heightIn(max = 220.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    LazyColumn(modifier = Modifier.heightIn(max = 140.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                         items(trustedKeysList) { keyItem ->
                                             Row(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
                                                     .background(Color(0xFF2A2A2A), RoundedCornerShape(8.dp))
-                                                    .padding(8.dp),
+                                                    .padding(6.dp),
                                                 horizontalArrangement = Arrangement.SpaceBetween,
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
                                                 Column(modifier = Modifier.weight(1f)) {
-                                                    Text(keyItem.label, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                                    Text(keyItem.label, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                                     Text(
                                                         keyItem.fingerprint,
-                                                        fontSize = 10.sp,
+                                                        fontSize = 9.sp,
                                                         fontFamily = FontFamily.Monospace,
                                                         color = MaterialTheme.colorScheme.primary
                                                     )
@@ -386,20 +490,16 @@ fun UnlockScreen(
                                                         hostKeyManager.untrustFingerprint(keyItem.fingerprint)
                                                         trustedKeysList = hostKeyManager.getTrustedKeys()
                                                     },
-                                                    modifier = Modifier.size(28.dp)
+                                                    modifier = Modifier.size(24.dp)
                                                 ) {
-                                                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                                                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
                                                 }
                                             }
                                         }
                                     }
                                 }
-                            }
-                        }
 
-                        // TAB 2: Advanced Options
-                        2 -> {
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                HorizontalDivider(color = Color.DarkGray)
                                 OutlinedTextField(
                                     value = mapperTarget,
                                     onValueChange = {
@@ -421,16 +521,6 @@ fun UnlockScreen(
                                     modifier = Modifier.fillMaxWidth(),
                                     singleLine = true
                                 )
-                                Button(
-                                    onClick = {
-                                        hostKeyManager.clearCachedIps()
-                                        Toast.makeText(context, "IP caches cleared", Toast.LENGTH_SHORT).show()
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF37474F)),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text("Clear Network IP Caches", fontSize = 12.sp)
-                                }
                             }
                         }
                     }
@@ -650,12 +740,23 @@ fun UnlockScreen(
                     contentDescription = "App Logo",
                     modifier = Modifier.size(32.dp)
                 )
-                Text(
-                    text = "UNLOCKER",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 20.sp,
-                    color = MaterialTheme.colorScheme.primary
-                )
+                Column {
+                    Text(
+                        text = "UNLOCKER",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Mode: ${autonomyMode.displayName}",
+                        fontSize = 10.sp,
+                        color = when (autonomyMode) {
+                            AutonomyMode.AUTO -> Color(0xFF81C784)
+                            AutonomyMode.SEMI_AUTO -> Color(0xFFFFB74D)
+                            AutonomyMode.MANUAL -> Color.Gray
+                        }
+                    )
+                }
             }
             Row {
                 IconButton(onClick = { showSettingsDialog = true }) {

@@ -23,6 +23,7 @@ class HostKeyManager(private val context: Context) {
         private const val KEY_DISCOVERY_MODE = "discovery_mode"
         private const val KEY_MAPPER_TARGET = "mapper_target"
         private const val KEY_POLL_TIMEOUT = "poll_timeout_sec"
+        private const val KEY_AUTONOMY_MODE = "autonomy_mode"
     }
 
     private val prefs: SharedPreferences by lazy {
@@ -175,6 +176,22 @@ class HostKeyManager(private val context: Context) {
         }
         editor.apply()
         AppLogger.d(TAG, "Cleared all cached IPs")
+    }
+
+    // --- Autonomy Mode ---
+
+    fun getAutonomyMode(): mu.nada.unlocker.data.AutonomyMode {
+        val name = prefs.getString(KEY_AUTONOMY_MODE, mu.nada.unlocker.data.AutonomyMode.MANUAL.name)
+        return try {
+            mu.nada.unlocker.data.AutonomyMode.valueOf(name ?: mu.nada.unlocker.data.AutonomyMode.MANUAL.name)
+        } catch (_: Exception) {
+            mu.nada.unlocker.data.AutonomyMode.MANUAL
+        }
+    }
+
+    fun setAutonomyMode(mode: mu.nada.unlocker.data.AutonomyMode) {
+        prefs.edit().putString(KEY_AUTONOMY_MODE, mode.name).apply()
+        AppLogger.i(TAG, "Autonomy mode set to: ${mode.name}")
     }
 
     // --- Mapper & Timeout Settings ---
