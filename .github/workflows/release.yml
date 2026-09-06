@@ -136,17 +136,13 @@ jobs:
           fi
 
           if [ "$SIGNED" = false ]; then
-            echo "Signing with debug keystore..."
-            DEBUG_KEYSTORE="$HOME/.android/debug.keystore"
-            mkdir -p "$HOME/.android"
-            if [ ! -f "$DEBUG_KEYSTORE" ]; then
-              keytool -genkey -v -keystore "$DEBUG_KEYSTORE" -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
-            fi
+            echo "Signing with repository permanent release keystore..."
+            REPO_KEYSTORE="android/app/keystore/release.jks"
 
-            "$APKSIGNER" sign --ks "$DEBUG_KEYSTORE" \
-              --ks-pass pass:android \
-              --ks-key-alias androiddebugkey \
-              --key-pass pass:android \
+            "$APKSIGNER" sign --ks "$REPO_KEYSTORE" \
+              --ks-pass pass:nadamu-unlocker-2026 \
+              --ks-key-alias nadamu \
+              --key-pass pass:nadamu-unlocker-2026 \
               --out "$FINAL_APK" \
               app-aligned.apk
           fi
