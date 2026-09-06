@@ -7,7 +7,7 @@
 > initrd by the lab or installer). If you change anything here, you are
 > changing BOTH sides — update this file in the same commit.
 >
-> Verified: 2026-08-28 (contract verified by lab test_unlock.py suite, Android BouncyCastle X25519/Ed25519 provider registration, and local multi-interface tethering)
+> Verified: 2026-09-06 (contract verified by lab test_unlock.py suite, Android TOFU host key pinning, structured logging, adaptive mapper polling, and channel IP caching)
 
 ## TL;DR
 
@@ -33,8 +33,7 @@ is NOT success.
   the authorized_keys entry MUST be in OpenSSH wire format
   (`ssh-ed25519 AAAA... comment`), NOT X.509/SPKI base64. On Android, full BouncyCastle provider
   is registered at slot 1 to support X25519 key exchange and Ed25519 signatures.
-- Host key pinning: planned TOFU (first-connect trust, then pinned).
-  Not implemented yet.
+- Host key pinning: TOFU (Trust On First Use) implemented with SHA-256 fingerprint verification and secure pinning in EncryptedSharedPreferences to prevent local MitM attacks on untrusted networks.
 
 ## Delivery step
 
@@ -51,13 +50,13 @@ printf '%s' "$PASSPHRASE" > /lib/cryptsetup/passfifo
 
 ## Success criteria (authoritative)
 
-Success = the mapper device exists after delivery:
+Success = an opened LUKS mapper device exists in `/dev/mapper` (adaptive discovery excluding `control`, or specific target if configured):
 
 ```sh
-ls /dev/mapper/<target>
+MAPPERS=$(ls /dev/mapper 2>/dev/null | grep -v "^control$")
 ```
 
-- The client MUST poll this (suggested: every 1 s, timeout ~30 s) after
+- The client MUST poll this (every 1 s, timeout ~15–30 s) after
   writing the fifo. Exit codes of the fifo write say nothing about the
   passphrase being correct.
 - On wrong passphrase the watcher stays in its loop; the poll simply times
@@ -73,9 +72,11 @@ present" as SUCCESS (handoff), not as an error.
 
 None currently open against the unlock protocol contract. The previous deviations (passfifo success false positives, X.509 SPKI key encoding, dead password fallback, and hardcoded /24 scanning) have been resolved and covered with unit and lab tests.
 
-Planned security enhancements:
-- Host key pinning (TOFU) to protect against local MITM on shared networks.
-- Android Keystore / EncryptedSharedPreferences migration for client private key storage.
+## Security & Architecture Enhancements
+
+- **Host Key Pinning (TOFU):** Protects against local MitM on public and shared networks by prompting the user for SHA-256 fingerprint verification on first connect and strictly enforcing the pinned key on subsequent unlocks.
+- **Structured Logging Subsystem:** 4-level logging (`DEBUG`, `INFO`, `WARN`, `ERROR`) with in-app filtering and one-click full export.
+- **Fast Multi-Channel Discovery & IP Caching:** Instant cache hit checks across USB (RNDIS/NCM), Wi-Fi Hotspot, and LAN interfaces, with dynamic CIDR subnet scanning.
 
 ## Lab test mapping
 

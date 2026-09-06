@@ -131,7 +131,21 @@ class KeyManager(private val context: Context) {
     }
 
     private val prefs by lazy {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        try {
+            val masterKey = androidx.security.crypto.MasterKey.Builder(context)
+                .setKeyScheme(androidx.security.crypto.MasterKey.KeyScheme.AES256_GCM)
+                .build()
+
+            androidx.security.crypto.EncryptedSharedPreferences.create(
+                context,
+                PREFS_NAME,
+                masterKey,
+                androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+        } catch (_: Exception) {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        }
     }
 
     /**

@@ -19,6 +19,17 @@ class NetworkScannerTest {
     }
 
     @Test
+    fun testCalculateSubnetIps_largeSubnet22() {
+        // /22 subnet has 1024 total IPs -> 1022 usable hosts
+        val address = InetAddress.getByName("10.193.60.10") as Inet4Address
+        val ips = NetworkScanner.calculateSubnetIps(address, 22.toShort(), maxHosts = 1024)
+
+        assertEquals(1022, ips.size)
+        assertEquals("10.193.60.1", ips.first())
+        assertEquals("10.193.63.254", ips.last())
+    }
+
+    @Test
     fun testCalculateSubnetIps_small30() {
         // /30 subnet has 4 total addresses: .0 network, .1 host, .2 host, .3 broadcast
         val address = InetAddress.getByName("10.0.0.1") as Inet4Address
@@ -74,5 +85,17 @@ class NetworkScannerTest {
     fun testHotspotSubnets_wiFiDirectAndVendor() {
         assertTrue(NetworkScanner.COMMON_HOTSPOT_SUBNETS.contains("192.168.49.1"))
         assertTrue(NetworkScanner.COMMON_HOTSPOT_SUBNETS.contains("192.168.50.1"))
+    }
+
+    @Test
+    fun testClassifyInterface() {
+        assertEquals(NetworkChannel.USB, NetworkScanner.classifyInterface("rndis0"))
+        assertEquals(NetworkChannel.USB, NetworkScanner.classifyInterface("usb0"))
+        assertEquals(NetworkChannel.USB, NetworkScanner.classifyInterface("ncm0"))
+        assertEquals(NetworkChannel.HOTSPOT, NetworkScanner.classifyInterface("ap0"))
+        assertEquals(NetworkChannel.HOTSPOT, NetworkScanner.classifyInterface("softap0"))
+        assertEquals(NetworkChannel.HOTSPOT, NetworkScanner.classifyInterface("swlan0"))
+        assertEquals(NetworkChannel.LAN, NetworkScanner.classifyInterface("wlan0"))
+        assertEquals(NetworkChannel.LAN, NetworkScanner.classifyInterface("eth0"))
     }
 }
