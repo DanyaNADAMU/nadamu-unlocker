@@ -5,7 +5,10 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
 import mu.nada.unlocker.log.AppLogger
+import mu.nada.unlocker.security.FingerprintUtils
 import mu.nada.unlocker.security.HostKeyManager
+import net.schmizz.sshj.SSHClient
+import net.schmizz.sshj.transport.verification.PromiscuousVerifier
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.Inet4Address
@@ -13,13 +16,15 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.Socket
+import java.security.PublicKey
 
 data class DiscoveredDevice(
     val ip: String,
     val port: Int = 22,
     val banner: String,
     val interfaceName: String,
-    val channel: NetworkChannel = NetworkChannel.LAN
+    val channel: NetworkChannel = NetworkChannel.LAN,
+    val fingerprint: String? = null
 )
 
 class NetworkScanner {
@@ -113,12 +118,12 @@ class NetworkScanner {
     /**
      * Fast Discovery Mode:
      * 1. Probe cached IPs for enabled active channels first (<200-300ms).
-     * 2. If no cache hit, prioritize scanning in custom channelPriority order and return on first confirmed target.
+     * 2. If no cache hit, prioritize scanning in custom channelPriority order and return confirmed target (matching trusted fingerprint if multiple exist).
      */
     suspend fun fastDiscovery(
         hostKeyManager: HostKeyManager? = null,
         port: Int = 22,
-        timeoutMs: Int = 250
+        timeoutMs: Int = 300
     ): DiscoveredDevice? = withContext(Dispatchers.IO) {
         val channelPriority = hostKeyManager?.getChannelPriority() ?: listOf(NetworkChannel.USB, NetworkChannel.HOTSPOT, NetworkChannel.LAN)
         val activeIfaces = getEligibleInterfaces().filter { iface ->
@@ -169,14 +174,21 @@ class NetworkScanner {
         }
 
         for (iface in sortedIfaces) {
-            val found = scanSubnetForLuks(iface, maxHosts = 512, timeoutMs = timeoutMs)
+            val found = scanSubnetForLuks(iface, maxHosts = 1024, timeoutMs = timeoutMs, hostKeyManager = hostKeyManager)
             if (found.isNotEmpty()) {
-                val device = found.first()
-                if (hostKeyManager != null) {
-                    hostKeyManager.setLastIp(device.channel, device.ip)
+                // If multiple devices found in subnet, prioritize the one matching trusted fingerprint
+                val chosenDevice = if (found.size > 1 && hostKeyManager?.hasAnyTrustedKeys() == true) {
+                    val trustedCandidate = findTrustedDeviceCandidate(found, hostKeyManager)
+                    trustedCandidate ?: found.first()
+                } else {
+                    found.first()
                 }
-                AppLogger.i(TAG, "Fast discovery: Found Dropbear target on ${device.ip}:${device.port} (${device.interfaceName})")
-                return@withContext device
+
+                if (hostKeyManager != null) {
+                    hostKeyManager.setLastIp(chosenDevice.channel, chosenDevice.ip)
+                }
+                AppLogger.i(TAG, "Fast discovery: Found target on ${chosenDevice.ip}:${chosenDevice.port} (${chosenDevice.interfaceName})")
+                return@withContext chosenDevice
             }
         }
 
@@ -184,6 +196,47 @@ class NetworkScanner {
         if (hostKeyManager?.isChannelEnabled(NetworkChannel.HOTSPOT) != false) {
             probeCommonHotspotGateways(port, timeoutMs)
         } else {
+            null
+        }
+    }
+
+    private suspend fun findTrustedDeviceCandidate(
+        devices: List<DiscoveredDevice>,
+        hostKeyManager: HostKeyManager
+    ): DiscoveredDevice? = withContext(Dispatchers.IO) {
+        val probes = devices.map { dev ->
+            async {
+                val fp = dev.fingerprint ?: fetchHostKeyFingerprint(dev.ip, dev.port)
+                if (fp != null && hostKeyManager.isFingerprintTrusted(fp)) {
+                    dev.copy(fingerprint = fp)
+                } else {
+                    null
+                }
+            }
+        }
+        probes.awaitAll().filterNotNull().firstOrNull()
+    }
+
+    suspend fun fetchHostKeyFingerprint(ip: String, port: Int = 22, timeoutMs: Int = 1500): String? = withContext(Dispatchers.IO) {
+        try {
+            var capturedKey: PublicKey? = null
+            val ssh = SSHClient()
+            ssh.addHostKeyVerifier(object : net.schmizz.sshj.transport.verification.HostKeyVerifier {
+                override fun verify(hostname: String?, port: Int, key: PublicKey?): Boolean {
+                    if (key != null) capturedKey = key
+                    return true
+                }
+                override fun findExistingAlgorithms(hostname: String?, port: Int): List<String> = emptyList()
+            })
+            ssh.connectTimeout = timeoutMs
+            ssh.timeout = timeoutMs
+            try {
+                ssh.connect(ip, port)
+            } finally {
+                try { ssh.disconnect() } catch (_: Exception) {}
+            }
+            capturedKey?.let { FingerprintUtils.getSha256Fingerprint(it) }
+        } catch (_: Exception) {
             null
         }
     }
@@ -200,13 +253,11 @@ class NetworkScanner {
 
     /**
      * Scan network prefixes concurrently for port 22 dropbear/SSH.
-     * If targetInterface is specified, only that interface is scanned.
-     * If null, all active eligible interfaces are scanned concurrently.
      */
     suspend fun scanSubnetForLuks(
         targetInterface: NetworkInterface? = null,
         maxHosts: Int = 1024,
-        timeoutMs: Int = 250,
+        timeoutMs: Int = 300,
         hostKeyManager: HostKeyManager? = null
     ): List<DiscoveredDevice> = withContext(Dispatchers.IO) {
         val interfaces = if (targetInterface != null) {
@@ -260,7 +311,7 @@ class NetworkScanner {
         ip: String,
         ifaceName: String,
         port: Int = 22,
-        timeoutMs: Int = 250,
+        timeoutMs: Int = 300,
         channel: NetworkChannel = classifyInterface(ifaceName)
     ): DiscoveredDevice? = withContext(Dispatchers.IO) {
         try {

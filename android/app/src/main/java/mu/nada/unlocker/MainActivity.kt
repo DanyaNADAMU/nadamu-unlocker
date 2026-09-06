@@ -833,7 +833,14 @@ fun UnlockScreen(
                         discoveredDevices = scanner.scanSubnetForLuks(hostKeyManager = hostKeyManager)
                         isScanning = false
                         if (discoveredDevices.isNotEmpty()) {
-                            val target = discoveredDevices.first()
+                            val target = if (discoveredDevices.size > 1 && hostKeyManager.hasAnyTrustedKeys()) {
+                                val trusted = discoveredDevices.firstOrNull { dev ->
+                                    dev.fingerprint != null && hostKeyManager.isFingerprintTrusted(dev.fingerprint)
+                                }
+                                trusted ?: discoveredDevices.first()
+                            } else {
+                                discoveredDevices.first()
+                            }
                             performUnlock(target.ip, target.port, target.channel)
                         } else {
                             AppLogger.e("UnlockScreen", "No Dropbear targets found on full scan.")

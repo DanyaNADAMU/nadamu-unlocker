@@ -57,8 +57,8 @@ class SshUnlocker(
         }
 
         ssh.addHostKeyVerifier(verifier)
-        ssh.connectTimeout = 3000
-        ssh.timeout = 5000
+        ssh.connectTimeout = 7000
+        ssh.timeout = 7000
 
         try {
             AppLogger.i(TAG, "Connecting to SSH server at $host:$port...")
@@ -169,6 +169,8 @@ class SshUnlocker(
         } catch (e: Exception) {
             val failureMsg = if (verifier is TofuHostKeyVerifier && verifier.lastVerificationError != null) {
                 verifier.lastVerificationError!!
+            } else if (e is net.schmizz.sshj.userauth.UserAuthException) {
+                "SSH Auth Rejected: Public key not authorized in laptop's /etc/dropbear/initramfs/authorized_keys."
             } else {
                 "SSH Unlock failed: ${e.message ?: e.javaClass.simpleName}"
             }
