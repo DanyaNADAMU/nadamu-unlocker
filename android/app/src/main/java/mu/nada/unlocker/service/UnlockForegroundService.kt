@@ -15,6 +15,7 @@ import android.os.IBinder
 import android.os.VibrationEffect
 import android.os.Vibrator
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
 import mu.nada.unlocker.MainActivity
 import mu.nada.unlocker.R
@@ -50,21 +51,29 @@ class UnlockForegroundService : Service() {
         const val EXTRA_TARGET_PORT = "extra_target_port"
 
         fun start(context: Context) {
-            val intent = Intent(context, UnlockForegroundService::class.java).apply {
-                action = ACTION_START
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            try {
+                val intent = Intent(context, UnlockForegroundService::class.java).apply {
+                    action = ACTION_START
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "Failed to start UnlockForegroundService", e)
             }
         }
 
         fun stop(context: Context) {
-            val intent = Intent(context, UnlockForegroundService::class.java).apply {
-                action = ACTION_STOP
+            try {
+                val intent = Intent(context, UnlockForegroundService::class.java).apply {
+                    action = ACTION_STOP
+                }
+                context.startService(intent)
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "Failed to stop UnlockForegroundService", e)
             }
-            context.startService(intent)
         }
     }
 
@@ -81,127 +90,158 @@ class UnlockForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        KeyManager.initBouncyCastle()
-        keyManager = KeyManager(this)
-        hostKeyManager = HostKeyManager(this)
-        createNotificationChannels()
+        try {
+            KeyManager.initBouncyCastle()
+            keyManager = KeyManager(this)
+            hostKeyManager = HostKeyManager(this)
+            createNotificationChannels()
+            startForegroundWithNotification()
 
-        registerEventReceivers()
-        registerNetworkCallbacks()
+            registerEventReceivers()
+            registerNetworkCallbacks()
 
-        AppLogger.i(TAG, "UnlockForegroundService created. Mode: ${hostKeyManager.getAutonomyMode().displayName}")
+            AppLogger.i(TAG, "UnlockForegroundService created. Mode: ${hostKeyManager.getAutonomyMode().displayName}")
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Error in UnlockForegroundService.onCreate", e)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_STOP -> {
-                AppLogger.i(TAG, "Stopping service via ACTION_STOP")
-                stopForeground(true)
-                stopSelf()
-                return START_NOT_STICKY
-            }
-            ACTION_TRIGGER_UNLOCK -> {
-                val ip = intent.getStringExtra(EXTRA_TARGET_IP)
-                val port = intent.getIntExtra(EXTRA_TARGET_PORT, 22)
-                AppLogger.i(TAG, "Manual trigger unlock requested from notification/tile: $ip:$port")
-                cancelNotification(NOTIFICATION_ID_PROMPT)
-                serviceScope.launch {
-                    if (ip != null) {
-                        performUnlock(ip, port)
+        try {
+            when (intent?.action) {
+                ACTION_STOP -> {
+                    AppLogger.i(TAG, "Stopping service via ACTION_STOP")
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                        stopForeground(STOP_FOREGROUND_REMOVE)
                     } else {
-                        handleNetworkEvent("Manual Trigger", force = true)
+                        @Suppress("DEPRECATION")
+                        stopForeground(true)
                     }
-                }
-            }
-            ACTION_DISMISS_PROMPT -> {
-                cancelNotification(NOTIFICATION_ID_PROMPT)
-            }
-            else -> {
-                val mode = hostKeyManager.getAutonomyMode()
-                if (mode == AutonomyMode.MANUAL) {
-                    AppLogger.d(TAG, "Service started but mode is MANUAL; stopping service.")
                     stopSelf()
                     return START_NOT_STICKY
                 }
-                startForegroundWithNotification()
+                ACTION_TRIGGER_UNLOCK -> {
+                    val ip = intent.getStringExtra(EXTRA_TARGET_IP)
+                    val port = intent.getIntExtra(EXTRA_TARGET_PORT, 22)
+                    AppLogger.i(TAG, "Manual trigger unlock requested from notification/tile: $ip:$port")
+                    cancelNotification(NOTIFICATION_ID_PROMPT)
+                    serviceScope.launch {
+                        if (ip != null) {
+                            performUnlock(ip, port)
+                        } else {
+                            handleNetworkEvent("Manual Trigger", force = true)
+                        }
+                    }
+                }
+                ACTION_DISMISS_PROMPT -> {
+                    cancelNotification(NOTIFICATION_ID_PROMPT)
+                }
+                else -> {
+                    val mode = hostKeyManager.getAutonomyMode()
+                    if (mode == AutonomyMode.MANUAL) {
+                        AppLogger.d(TAG, "Service started but mode is MANUAL; stopping service.")
+                        stopSelf()
+                        return START_NOT_STICKY
+                    }
+                    startForegroundWithNotification()
+                }
             }
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Error in onStartCommand", e)
         }
         return START_STICKY
     }
 
     private fun startForegroundWithNotification() {
-        val mode = hostKeyManager.getAutonomyMode()
-        val text = when (mode) {
-            AutonomyMode.AUTO -> "Auto-Unlock active • Monitoring USB, Hotspot & Wi-Fi"
-            AutonomyMode.SEMI_AUTO -> "Semi-Auto active • Ready to prompt on network events"
-            AutonomyMode.MANUAL -> "Ready on demand"
-        }
+        try {
+            val mode = hostKeyManager.getAutonomyMode()
+            val text = when (mode) {
+                AutonomyMode.AUTO -> "Auto-Unlock active • Monitoring USB, Hotspot & Wi-Fi"
+                AutonomyMode.SEMI_AUTO -> "Semi-Auto active • Ready to prompt on network events"
+                AutonomyMode.MANUAL -> "Ready on demand"
+            }
 
-        val openAppIntent = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val notification = NotificationCompat.Builder(this, CHANNEL_SERVICE)
-            .setSmallIcon(R.drawable.app_logo)
-            .setContentTitle("Nadamu Unlocker")
-            .setContentText(text)
-            .setContentIntent(openAppIntent)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setOngoing(true)
-            .build()
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID_SERVICE,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            val openAppIntent = PendingIntent.getActivity(
+                this,
+                0,
+                Intent(this, MainActivity::class.java),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-        } else {
-            startForeground(NOTIFICATION_ID_SERVICE, notification)
+
+            val notification = NotificationCompat.Builder(this, CHANNEL_SERVICE)
+                .setSmallIcon(R.drawable.app_logo)
+                .setContentTitle("Nadamu Unlocker")
+                .setContentText(text)
+                .setContentIntent(openAppIntent)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setOngoing(true)
+                .build()
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID_SERVICE,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+                )
+            } else {
+                startForeground(NOTIFICATION_ID_SERVICE, notification)
+            }
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Failed to startForegroundWithNotification", e)
         }
     }
 
     private fun registerEventReceivers() {
-        val filter = IntentFilter().apply {
-            addAction(Intent.ACTION_USER_PRESENT) // Screen unlock
-            addAction("android.hardware.usb.action.USB_STATE") // USB connection
-            addAction("android.net.wifi.WIFI_AP_STATE_CHANGED") // Hotspot state
-            addAction("android.net.wifi.STATE_CHANGE")
-        }
+        try {
+            val filter = IntentFilter().apply {
+                addAction(Intent.ACTION_USER_PRESENT)
+                addAction("android.hardware.usb.action.USB_STATE")
+                addAction("android.net.wifi.WIFI_AP_STATE_CHANGED")
+                addAction("android.net.wifi.STATE_CHANGE")
+            }
 
-        eventReceiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context?, intent: Intent?) {
-                val action = intent?.action ?: return
-                val eventName = when (action) {
-                    Intent.ACTION_USER_PRESENT -> "Screen Unlocked"
-                    "android.hardware.usb.action.USB_STATE" -> {
-                        val connected = intent.getBooleanExtra("connected", false)
-                        if (!connected) return
-                        "USB Connected"
+            eventReceiver = object : BroadcastReceiver() {
+                override fun onReceive(context: Context?, intent: Intent?) {
+                    val action = intent?.action ?: return
+                    val eventName = when (action) {
+                        Intent.ACTION_USER_PRESENT -> "Screen Unlocked"
+                        "android.hardware.usb.action.USB_STATE" -> {
+                            val connected = intent.getBooleanExtra("connected", false)
+                            if (!connected) return
+                            "USB Connected"
+                        }
+                        "android.net.wifi.WIFI_AP_STATE_CHANGED" -> "Hotspot State Changed"
+                        else -> action
                     }
-                    "android.net.wifi.WIFI_AP_STATE_CHANGED" -> "Hotspot State Changed"
-                    else -> action
-                }
 
-                // Check channel enablements before triggering
-                if (action == "android.hardware.usb.action.USB_STATE" && !hostKeyManager.isChannelEnabled(NetworkChannel.USB)) {
-                    return
-                }
-                if (action == "android.net.wifi.WIFI_AP_STATE_CHANGED" && !hostKeyManager.isChannelEnabled(NetworkChannel.HOTSPOT)) {
-                    return
-                }
+                    // Check channel enablements before triggering
+                    if (action == "android.hardware.usb.action.USB_STATE" && !hostKeyManager.isChannelEnabled(NetworkChannel.USB)) {
+                        return
+                    }
+                    if (action == "android.net.wifi.WIFI_AP_STATE_CHANGED" && !hostKeyManager.isChannelEnabled(NetworkChannel.HOTSPOT)) {
+                        return
+                    }
 
-                AppLogger.d(TAG, "Received system event: $eventName")
-                serviceScope.launch {
-                    handleNetworkEvent(eventName)
+                    AppLogger.d(TAG, "Received system event: $eventName")
+                    serviceScope.launch {
+                        handleNetworkEvent(eventName)
+                    }
                 }
             }
-        }
 
-        registerReceiver(eventReceiver, filter)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                ContextCompat.registerReceiver(
+                    this,
+                    eventReceiver!!,
+                    filter,
+                    ContextCompat.RECEIVER_EXPORTED
+                )
+            } else {
+                registerReceiver(eventReceiver, filter)
+            }
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Failed to register event receivers", e)
+        }
     }
 
     private fun registerNetworkCallbacks() {
@@ -307,128 +347,148 @@ class UnlockForegroundService : Service() {
     }
 
     private fun showSemiAutoPromptNotification(target: DiscoveredDevice) {
-        val unlockIntent = Intent(this, UnlockForegroundService::class.java).apply {
-            action = ACTION_TRIGGER_UNLOCK
-            putExtra(EXTRA_TARGET_IP, target.ip)
-            putExtra(EXTRA_TARGET_PORT, target.port)
+        try {
+            val unlockIntent = Intent(this, UnlockForegroundService::class.java).apply {
+                action = ACTION_TRIGGER_UNLOCK
+                putExtra(EXTRA_TARGET_IP, target.ip)
+                putExtra(EXTRA_TARGET_PORT, target.port)
+            }
+            val unlockPendingIntent = PendingIntent.getService(
+                this,
+                1,
+                unlockIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val dismissIntent = Intent(this, UnlockForegroundService::class.java).apply {
+                action = ACTION_DISMISS_PROMPT
+            }
+            val dismissPendingIntent = PendingIntent.getService(
+                this,
+                2,
+                dismissIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val openAppIntent = PendingIntent.getActivity(
+                this,
+                0,
+                Intent(this, MainActivity::class.java),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val notification = NotificationCompat.Builder(this, CHANNEL_ALERTS)
+                .setSmallIcon(R.drawable.app_logo)
+                .setContentTitle("🔓 Laptop Detected (${target.channel.name})")
+                .setContentText("Target found on ${target.ip}:${target.port}. Unlock now?")
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .setContentIntent(openAppIntent)
+                .addAction(R.drawable.app_logo, "Unlock Now", unlockPendingIntent)
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Dismiss", dismissPendingIntent)
+                .build()
+
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.notify(NOTIFICATION_ID_PROMPT, notification)
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Failed to show semi-auto prompt notification", e)
         }
-        val unlockPendingIntent = PendingIntent.getService(
-            this,
-            1,
-            unlockIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val dismissIntent = Intent(this, UnlockForegroundService::class.java).apply {
-            action = ACTION_DISMISS_PROMPT
-        }
-        val dismissPendingIntent = PendingIntent.getService(
-            this,
-            2,
-            dismissIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val openAppIntent = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val notification = NotificationCompat.Builder(this, CHANNEL_ALERTS)
-            .setSmallIcon(R.drawable.app_logo)
-            .setContentTitle("🔓 Laptop Detected (${target.channel.name})")
-            .setContentText("Target found on ${target.ip}:${target.port}. Unlock now?")
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setAutoCancel(true)
-            .setContentIntent(openAppIntent)
-            .addAction(R.drawable.app_logo, "Unlock Now", unlockPendingIntent)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Dismiss", dismissPendingIntent)
-            .build()
-
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID_PROMPT, notification)
     }
 
     private fun showSuccessNotification(targetIp: String, message: String) {
-        val openAppIntent = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        try {
+            val openAppIntent = PendingIntent.getActivity(
+                this,
+                0,
+                Intent(this, MainActivity::class.java),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
 
-        val notification = NotificationCompat.Builder(this, CHANNEL_ALERTS)
-            .setSmallIcon(R.drawable.app_logo)
-            .setContentTitle("🎉 Laptop Unlocked!")
-            .setContentText("Successfully unlocked LUKS disk on $targetIp.")
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setAutoCancel(true)
-            .setContentIntent(openAppIntent)
-            .build()
+            val notification = NotificationCompat.Builder(this, CHANNEL_ALERTS)
+                .setSmallIcon(R.drawable.app_logo)
+                .setContentTitle("🎉 Laptop Unlocked!")
+                .setContentText("Successfully unlocked LUKS disk on $targetIp.")
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setAutoCancel(true)
+                .setContentIntent(openAppIntent)
+                .build()
 
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID_RESULT, notification)
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.notify(NOTIFICATION_ID_RESULT, notification)
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Failed to show success notification", e)
+        }
     }
 
     private fun showMitMAlertNotification(targetIp: String, fingerprint: String) {
-        val openAppIntent = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        try {
+            val openAppIntent = PendingIntent.getActivity(
+                this,
+                0,
+                Intent(this, MainActivity::class.java),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
 
-        val notification = NotificationCompat.Builder(this, CHANNEL_ALERTS)
-            .setSmallIcon(R.drawable.app_logo)
-            .setContentTitle("⚠️ MitM Alert: Untrusted Host Key")
-            .setContentText("Host key on $targetIp does NOT match your trusted laptop! Connection aborted.")
-            .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setAutoCancel(true)
-            .setContentIntent(openAppIntent)
-            .build()
+            val notification = NotificationCompat.Builder(this, CHANNEL_ALERTS)
+                .setSmallIcon(R.drawable.app_logo)
+                .setContentTitle("⚠️ MitM Alert: Untrusted Host Key")
+                .setContentText("Host key on $targetIp does NOT match your trusted laptop! Connection aborted.")
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setAutoCancel(true)
+                .setContentIntent(openAppIntent)
+                .build()
 
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID_RESULT, notification)
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.notify(NOTIFICATION_ID_RESULT, notification)
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Failed to show MitM alert notification", e)
+        }
     }
 
     private fun showUntrustedHostNotification(targetIp: String, fingerprint: String) {
-        val openAppIntent = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        try {
+            val openAppIntent = PendingIntent.getActivity(
+                this,
+                0,
+                Intent(this, MainActivity::class.java),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
 
-        val notification = NotificationCompat.Builder(this, CHANNEL_ALERTS)
-            .setSmallIcon(R.drawable.app_logo)
-            .setContentTitle("🔑 New Host Key Detected")
-            .setContentText("Open Nadamu Unlocker to verify and trust this laptop key ($targetIp).")
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setAutoCancel(true)
-            .setContentIntent(openAppIntent)
-            .build()
+            val notification = NotificationCompat.Builder(this, CHANNEL_ALERTS)
+                .setSmallIcon(R.drawable.app_logo)
+                .setContentTitle("🔑 New Host Key Detected")
+                .setContentText("Open Nadamu Unlocker to verify and trust this laptop key ($targetIp).")
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .setContentIntent(openAppIntent)
+                .build()
 
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID_RESULT, notification)
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.notify(NOTIFICATION_ID_RESULT, notification)
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Failed to show untrusted host notification", e)
+        }
     }
 
     private fun vibrateSuccess() {
         try {
-            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 100, 80, 150), -1))
-            } else {
-                @Suppress("DEPRECATION")
-                vibrator.vibrate(longArrayOf(0, 100, 80, 150), -1)
+            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            if (vibrator != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 100, 80, 150), -1))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(longArrayOf(0, 100, 80, 150), -1)
+                }
             }
         } catch (_: Exception) {}
     }
 
     private fun cancelNotification(id: Int) {
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.cancel(id)
+        try {
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.cancel(id)
+        } catch (_: Exception) {}
     }
 
     private fun createNotificationChannels() {
