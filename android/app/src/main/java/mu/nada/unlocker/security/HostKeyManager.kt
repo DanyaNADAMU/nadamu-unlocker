@@ -26,6 +26,8 @@ class HostKeyManager(private val context: Context) {
         private const val KEY_AUTONOMY_MODE = "autonomy_mode"
         private const val KEY_TARGET_PORTS = "target_ports_csv"
         private const val KEY_BANNER_REGEX = "banner_regex_filter"
+        private const val KEY_BIOMETRIC_UNLOCK = "biometric_unlock_required"
+        private const val KEY_APP_LOCK = "app_lock_enabled"
     }
 
     private val prefs: SharedPreferences by lazy {
@@ -219,6 +221,26 @@ class HostKeyManager(private val context: Context) {
         val trimmed = regex.trim()
         prefs.edit().putString(KEY_BANNER_REGEX, if (trimmed.isNotBlank()) trimmed else ".*dropbear.*").apply()
         AppLogger.d(TAG, "SSH banner regex set to: $trimmed")
+    }
+
+    // --- Biometric Security Settings ---
+
+    fun isBiometricUnlockRequired(): Boolean {
+        return prefs.getBoolean(KEY_BIOMETRIC_UNLOCK, false)
+    }
+
+    fun setBiometricUnlockRequired(required: Boolean) {
+        prefs.edit().putBoolean(KEY_BIOMETRIC_UNLOCK, required).apply()
+        AppLogger.i(TAG, "Biometric unlock required set to: $required")
+    }
+
+    fun isAppLockEnabled(): Boolean {
+        return prefs.getBoolean(KEY_APP_LOCK, false)
+    }
+
+    fun setAppLockEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_APP_LOCK, enabled).apply()
+        AppLogger.i(TAG, "App lock enabled set to: $enabled")
     }
 
     // --- Mapper & Timeout Settings ---

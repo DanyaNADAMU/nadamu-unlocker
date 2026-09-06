@@ -12,7 +12,6 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -40,18 +39,20 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import mu.nada.unlocker.data.*
 import mu.nada.unlocker.log.AppLogger
 import mu.nada.unlocker.log.LogLevel
+import mu.nada.unlocker.security.BiometricHelper
 import mu.nada.unlocker.security.HostKeyManager
 import mu.nada.unlocker.security.TofuDecision
 import mu.nada.unlocker.service.UnlockForegroundService
 import mu.nada.unlocker.ssh.SshUnlocker
 import mu.nada.unlocker.ssh.UnlockResult
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
 
     private lateinit var keyManager: KeyManager
     private lateinit var hostKeyManager: HostKeyManager
@@ -86,19 +87,90 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    UnlockScreen(
-                        keyManager = keyManager,
-                        hostKeyManager = hostKeyManager,
-                        scanner = scanner,
-                        unlocker = unlocker,
-                        onCopy = { label, text ->
-                            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
-                            Toast.makeText(this, "$label copied to clipboard!", Toast.LENGTH_SHORT).show()
+                    var isAppUnlocked by remember { mutableStateOf(!hostKeyManager.isAppLockEnabled()) }
+
+                    LaunchedEffect(Unit) {
+                        if (hostKeyManager.isAppLockEnabled() && !isAppUnlocked) {
+                            BiometricHelper.authenticate(
+                                activity = this@MainActivity,
+                                title = "Nadamu Unlocker Locked",
+                                subtitle = "Authenticate with fingerprint to open app",
+                                onSuccess = { isAppUnlocked = true },
+                                onError = { msg ->
+                                    AppLogger.w("MainActivity", "App lock auth failed: $msg")
+                                }
+                            )
                         }
-                    )
+                    }
+
+                    if (!isAppUnlocked) {
+                        AppLockedScreen(
+                            onAuthenticate = {
+                                BiometricHelper.authenticate(
+                                    activity = this@MainActivity,
+                                    title = "Nadamu Unlocker Locked",
+                                    subtitle = "Authenticate with fingerprint to open app",
+                                    onSuccess = { isAppUnlocked = true },
+                                    onError = { msg ->
+                                        Toast.makeText(this@MainActivity, "Authentication failed: $msg", Toast.LENGTH_SHORT).show()
+                                    }
+                                )
+                            }
+                        )
+                    } else {
+                        UnlockScreen(
+                            activity = this,
+                            keyManager = keyManager,
+                            hostKeyManager = hostKeyManager,
+                            scanner = scanner,
+                            unlocker = unlocker,
+                            onCopy = { label, text ->
+                                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
+                                Toast.makeText(this, "$label copied to clipboard!", Toast.LENGTH_SHORT).show()
+                            }
+                        )
+                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun AppLockedScreen(onAuthenticate: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        androidx.compose.foundation.Image(
+            painter = androidx.compose.ui.res.painterResource(id = R.drawable.app_logo),
+            contentDescription = "App Logo",
+            modifier = Modifier.size(72.dp)
+        )
+        Spacer(modifier = Modifier.height(24.dp))
+        Text("App is Locked", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            "Biometric authentication is required to access Nadamu Unlocker.",
+            fontSize = 13.sp,
+            color = Color.Gray,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
+        Spacer(modifier = Modifier.height(32.dp))
+        Button(
+            onClick = onAuthenticate,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(50.dp)
+        ) {
+            Icon(Icons.Default.Fingerprint, contentDescription = null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Unlock with Biometrics", fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -115,6 +187,7 @@ data class TofuPromptRequest(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UnlockScreen(
+    activity: FragmentActivity,
     keyManager: KeyManager,
     hostKeyManager: HostKeyManager,
     scanner: NetworkScanner,
@@ -147,6 +220,8 @@ fun UnlockScreen(
     var pollTimeoutSec by remember { mutableStateOf(hostKeyManager.getPollTimeoutSeconds()) }
     var targetPortsInput by remember { mutableStateOf(hostKeyManager.getTargetPorts().joinToString(", ")) }
     var bannerRegexInput by remember { mutableStateOf(hostKeyManager.getBannerRegex()) }
+    var requireBiometrics by remember { mutableStateOf(hostKeyManager.isBiometricUnlockRequired()) }
+    var appLockEnabled by remember { mutableStateOf(hostKeyManager.isAppLockEnabled()) }
 
     // TOFU Dialog State
     var tofuRequest by remember { mutableStateOf<TofuPromptRequest?>(null) }
@@ -291,15 +366,16 @@ fun UnlockScreen(
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Default.Settings, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Text("Settings & Automation", fontWeight = FontWeight.Bold)
+                    Text("Settings & Security", fontWeight = FontWeight.Bold)
                 }
             },
             text = {
                 Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     TabRow(selectedTabIndex = activeTab) {
-                        Tab(selected = activeTab == 0, onClick = { activeTab = 0 }, text = { Text("Automation", fontSize = 11.sp) })
-                        Tab(selected = activeTab == 1, onClick = { activeTab = 1 }, text = { Text("Network", fontSize = 11.sp) })
-                        Tab(selected = activeTab == 2, onClick = { activeTab = 2 }, text = { Text("Keys & Opts", fontSize = 11.sp) })
+                        Tab(selected = activeTab == 0, onClick = { activeTab = 0 }, text = { Text("Auto", fontSize = 10.sp) })
+                        Tab(selected = activeTab == 1, onClick = { activeTab = 1 }, text = { Text("Network", fontSize = 10.sp) })
+                        Tab(selected = activeTab == 2, onClick = { activeTab = 2 }, text = { Text("Security", fontSize = 10.sp) })
+                        Tab(selected = activeTab == 3, onClick = { activeTab = 3 }, text = { Text("Keys/Opts", fontSize = 10.sp) })
                     }
 
                     when (activeTab) {
@@ -314,8 +390,7 @@ fun UnlockScreen(
                                             containerColor = if (autonomyMode == mode) Color(0xFF1E3A5F) else Color(0xFF2A2A2A)
                                         ),
                                         shape = RoundedCornerShape(8.dp),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
+                                        modifier = Modifier.fillMaxWidth()
                                     ) {
                                         Row(
                                             modifier = Modifier
@@ -356,7 +431,7 @@ fun UnlockScreen(
                             }
                         }
 
-                        // TAB 1: Network & Channel Priority
+                        // TAB 1: Network & Channel Priority & Filters
                         1 -> {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("Default Action Mode:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
@@ -380,7 +455,7 @@ fun UnlockScreen(
                                 }
 
                                 HorizontalDivider(color = Color.DarkGray)
-                                Text("Scanning & Filter Filters:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text("Target Ports & Banner Filters:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 OutlinedTextField(
                                     value = targetPortsInput,
                                     onValueChange = {
@@ -403,7 +478,10 @@ fun UnlockScreen(
                                     modifier = Modifier.fillMaxWidth()
                                 )
 
-                                LazyColumn(modifier = Modifier.heightIn(max = 200.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                HorizontalDivider(color = Color.DarkGray)
+                                Text("Channel Priorities & Active Channels:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+
+                                LazyColumn(modifier = Modifier.heightIn(max = 140.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     itemsIndexed(channelPriority) { index, channel ->
                                         val isEnabled = hostKeyManager.isChannelEnabled(channel)
                                         Row(
@@ -424,7 +502,7 @@ fun UnlockScreen(
                                                 )
                                                 Text(
                                                     "${index + 1}. ${channel.name}",
-                                                    fontSize = 12.sp,
+                                                    fontSize = 11.sp,
                                                     fontWeight = FontWeight.SemiBold
                                                 )
                                             }
@@ -440,9 +518,9 @@ fun UnlockScreen(
                                                         }
                                                     },
                                                     enabled = index > 0,
-                                                    modifier = Modifier.size(28.dp)
+                                                    modifier = Modifier.size(26.dp)
                                                 ) {
-                                                    Icon(Icons.Default.ArrowUpward, contentDescription = "Move Up", modifier = Modifier.size(16.dp))
+                                                    Icon(Icons.Default.ArrowUpward, contentDescription = "Move Up", modifier = Modifier.size(14.dp))
                                                 }
                                                 IconButton(
                                                     onClick = {
@@ -455,9 +533,9 @@ fun UnlockScreen(
                                                         }
                                                     },
                                                     enabled = index < channelPriority.size - 1,
-                                                    modifier = Modifier.size(28.dp)
+                                                    modifier = Modifier.size(26.dp)
                                                 ) {
-                                                    Icon(Icons.Default.ArrowDownward, contentDescription = "Move Down", modifier = Modifier.size(16.dp))
+                                                    Icon(Icons.Default.ArrowDownward, contentDescription = "Move Down", modifier = Modifier.size(14.dp))
                                                 }
                                             }
                                         }
@@ -466,8 +544,65 @@ fun UnlockScreen(
                             }
                         }
 
-                        // TAB 2: Device-Centric Trusted Keys & Advanced Options
+                        // TAB 2: Biometric Security Settings
                         2 -> {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text("Biometric Protection:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2A2A)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(10.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text("Require Fingerprint to Unlock", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                            Text("Prompts for fingerprint before sending disk password", fontSize = 10.sp, color = Color.Gray)
+                                        }
+                                        Switch(
+                                            checked = requireBiometrics,
+                                            onCheckedChange = { checked ->
+                                                requireBiometrics = checked
+                                                hostKeyManager.setBiometricUnlockRequired(checked)
+                                            }
+                                        )
+                                    }
+                                }
+
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2A2A)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(10.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text("App Lock on Launch", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                            Text("Requires fingerprint authentication to open Nadamu", fontSize = 10.sp, color = Color.Gray)
+                                        }
+                                        Switch(
+                                            checked = appLockEnabled,
+                                            onCheckedChange = { checked ->
+                                                appLockEnabled = checked
+                                                hostKeyManager.setAppLockEnabled(checked)
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // TAB 3: Device-Centric Trusted Keys & Advanced Options
+                        3 -> {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -489,7 +624,7 @@ fun UnlockScreen(
                                         color = Color.Gray
                                     )
                                 } else {
-                                    LazyColumn(modifier = Modifier.heightIn(max = 140.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    LazyColumn(modifier = Modifier.heightIn(max = 120.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                         items(trustedKeysList) { keyItem ->
                                             Row(
                                                 modifier = Modifier
@@ -703,42 +838,58 @@ fun UnlockScreen(
 
     // Function to perform unlock on a target host
     fun performUnlock(targetIp: String, targetPort: Int = 22, channel: NetworkChannel = NetworkChannel.LAN) {
-        scope.launch {
-            if (password.isEmpty()) {
-                AppLogger.w("UnlockScreen", "Please enter LUKS disk password first.")
-                Toast.makeText(context, "Please enter password", Toast.LENGTH_SHORT).show()
-                return@launch
+        val executeSshUnlock = {
+            scope.launch {
+                if (password.isEmpty()) {
+                    AppLogger.w("UnlockScreen", "Please enter LUKS disk password first.")
+                    Toast.makeText(context, "Please enter password", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+
+                isUnlocking = true
+                AppLogger.i("UnlockScreen", "Initiating unlock for $targetIp:$targetPort (${channel.displayName})...")
+
+                val privKeyPem = keyManager.getPrivateKeyPem()
+                val result = unlocker.unlock(
+                    host = targetIp,
+                    port = targetPort,
+                    password = password,
+                    privateKeyPem = privKeyPem,
+                    mapperTarget = hostKeyManager.getMapperTarget(),
+                    pollTimeoutSeconds = hostKeyManager.getPollTimeoutSeconds(),
+                    hostKeyManager = hostKeyManager,
+                    tofuPrompt = { host, port, fp, type, isMismatch ->
+                        val def = CompletableDeferred<TofuDecision>()
+                        tofuRequest = TofuPromptRequest(host, port, fp, type, isMismatch, def)
+                        kotlinx.coroutines.runBlocking { def.await() }
+                    }
+                )
+
+                when (result) {
+                    is UnlockResult.Success -> {
+                        hostKeyManager.setLastIp(channel, targetIp)
+                        Toast.makeText(context, "LUKS Unlocked Successfully!", Toast.LENGTH_LONG).show()
+                    }
+                    is UnlockResult.Failure -> {
+                        Toast.makeText(context, "Unlock failed: ${result.error}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+                isUnlocking = false
             }
+        }
 
-            isUnlocking = true
-            AppLogger.i("UnlockScreen", "Initiating unlock for $targetIp:$targetPort (${channel.displayName})...")
-
-            val privKeyPem = keyManager.getPrivateKeyPem()
-            val result = unlocker.unlock(
-                host = targetIp,
-                port = targetPort,
-                password = password,
-                privateKeyPem = privKeyPem,
-                mapperTarget = hostKeyManager.getMapperTarget(),
-                pollTimeoutSeconds = hostKeyManager.getPollTimeoutSeconds(),
-                hostKeyManager = hostKeyManager,
-                tofuPrompt = { host, port, fp, type, isMismatch ->
-                    val def = CompletableDeferred<TofuDecision>()
-                    tofuRequest = TofuPromptRequest(host, port, fp, type, isMismatch, def)
-                    kotlinx.coroutines.runBlocking { def.await() }
+        if (hostKeyManager.isBiometricUnlockRequired()) {
+            BiometricHelper.authenticate(
+                activity = activity,
+                title = "Authorize LUKS Unlock",
+                subtitle = "Touch fingerprint sensor to send disk password",
+                onSuccess = { executeSshUnlock() },
+                onError = { err ->
+                    Toast.makeText(context, "Biometric auth cancelled: $err", Toast.LENGTH_SHORT).show()
                 }
             )
-
-            when (result) {
-                is UnlockResult.Success -> {
-                    hostKeyManager.setLastIp(channel, targetIp)
-                    Toast.makeText(context, "LUKS Unlocked Successfully!", Toast.LENGTH_LONG).show()
-                }
-                is UnlockResult.Failure -> {
-                    Toast.makeText(context, "Unlock failed: ${result.error}", Toast.LENGTH_SHORT).show()
-                }
-            }
-            isUnlocking = false
+        } else {
+            executeSshUnlock()
         }
     }
 
@@ -792,7 +943,7 @@ fun UnlockScreen(
                         AppLogger.i("NetworkScanner", "Full subnet scan on active networks ($activeIfaces)...")
                         discoveredDevices = scanner.scanSubnetForLuks(hostKeyManager = hostKeyManager)
                         if (discoveredDevices.isEmpty()) {
-                            AppLogger.w("NetworkScanner", "No Dropbear targets found on port 22.")
+                            AppLogger.w("NetworkScanner", "No Dropbear targets found.")
                         } else {
                             discoveredDevices.forEach { dev ->
                                 AppLogger.i("NetworkScanner", "Found device: ${dev.ip}:${dev.port} (${dev.interfaceName})")
@@ -816,7 +967,18 @@ fun UnlockScreen(
             label = { Text("LUKS Disk Password") },
             visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
             trailingIcon = {
-                IconButton(onClick = { showPassword = !showPassword }) {
+                IconButton(onClick = {
+                    if (!showPassword && hostKeyManager.isBiometricUnlockRequired()) {
+                        BiometricHelper.authenticate(
+                            activity = activity,
+                            title = "Show Password",
+                            subtitle = "Authenticate to view disk password",
+                            onSuccess = { showPassword = true }
+                        )
+                    } else {
+                        showPassword = !showPassword
+                    }
+                }) {
                     Icon(
                         if (showPassword) Icons.Default.Visibility else Icons.Default.VisibilityOff,
                         contentDescription = "Toggle password visibility"
@@ -843,7 +1005,7 @@ fun UnlockScreen(
 
                         val target = scanner.fastDiscovery(hostKeyManager = hostKeyManager)
                         if (target == null) {
-                            AppLogger.e("UnlockScreen", "No laptop found (port 22 unreachable on active enabled interfaces).")
+                            AppLogger.e("UnlockScreen", "No matching laptop found on active enabled interfaces.")
                             AppLogger.i("UnlockScreen", "Hint: Ensure laptop is in initramfs boot stage with Dropbear listening.")
                         } else {
                             performUnlock(target.ip, target.port, target.channel)
