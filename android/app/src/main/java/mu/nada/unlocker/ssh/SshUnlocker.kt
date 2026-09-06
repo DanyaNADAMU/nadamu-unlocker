@@ -8,9 +8,12 @@ import mu.nada.unlocker.security.HostKeyManager
 import mu.nada.unlocker.security.TofuHostKeyVerifier
 import mu.nada.unlocker.security.TofuPromptCallback
 import net.schmizz.sshj.SSHClient
+import net.schmizz.sshj.transport.TransportException
 import net.schmizz.sshj.transport.verification.HostKeyVerifier
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
+import java.io.EOFException
 import java.io.IOException
+import java.net.SocketException
 import java.util.concurrent.TimeUnit
 
 sealed class UnlockResult {
@@ -85,7 +88,8 @@ class SshUnlocker(
                 } catch (_: Exception) {}
             }
 
-            if (writeExitStatus != null && writeExitStatus != 0 && !fifoOutput.contains("FIFO_OK")) {
+            val fifoSuccess = (writeExitStatus == 0 || fifoOutput.contains("FIFO_OK"))
+            if (!fifoSuccess) {
                 val errorMsg = "Passfifo write failed (code $writeExitStatus): $fifoOutput"
                 AppLogger.e(TAG, errorMsg)
                 return@withContext UnlockResult.Failure(errorMsg)
@@ -104,10 +108,15 @@ class SshUnlocker(
             val maxDurationMs = pollTimeoutSeconds * 1000L
 
             var mapperFoundName: String? = null
-            var handoffOccurred = false
+            var handoffDisconnect = false
 
             while (System.currentTimeMillis() - startTime < maxDurationMs) {
                 try {
+                    if (!ssh.isConnected) {
+                        handoffDisconnect = true
+                        break
+                    }
+
                     val pollSession = ssh.startSession()
                     try {
                         val pollExec = pollSession.exec(checkMapperCmd)
@@ -129,24 +138,29 @@ class SshUnlocker(
                         } catch (_: Exception) {}
                     }
                 } catch (e: Exception) {
-                    // During pivot_root to real rootfs, Dropbear and network are terminated by kernel
-                    if (mapperFoundName != null) {
-                        handoffOccurred = true
+                    val msg = e.message ?: ""
+                    AppLogger.d(TAG, "SSH session disconnect during mapper poll (handoff): $msg")
+                    val isConnectionSevered = e is SocketException || e is EOFException || e is TransportException ||
+                            msg.contains("closed", ignoreCase = true) || msg.contains("abort", ignoreCase = true) ||
+                            msg.contains("reset", ignoreCase = true) || msg.contains("not connected", ignoreCase = true) ||
+                            msg.contains("timeout", ignoreCase = true)
+
+                    if (isConnectionSevered) {
+                        handoffDisconnect = true
                         break
                     }
-                    AppLogger.d(TAG, "SSH session closed/reset during mapper poll (possible pivot_root): ${e.message}")
                 }
                 delay(1000)
             }
 
             if (mapperFoundName != null) {
-                val successMessage = if (handoffOccurred) {
-                    "LUKS partition unlocked (mapper: $mapperFoundName) and system handed off to rootfs"
-                } else {
-                    "LUKS partition unlocked (mapper: $mapperFoundName) on $host:$port"
-                }
+                val successMessage = "LUKS partition unlocked (mapper: $mapperFoundName) on $host:$port"
                 AppLogger.i(TAG, "[SUCCESS] $successMessage")
                 UnlockResult.Success(successMessage, mapperFoundName)
+            } else if (handoffDisconnect && fifoSuccess) {
+                val handoffMsg = "Passphrase delivered (FIFO_OK). Initramfs closed SSH session and handed off to main rootfs."
+                AppLogger.i(TAG, "[SUCCESS] $handoffMsg")
+                UnlockResult.Success(handoffMsg, "rootfs")
             } else {
                 val errorMsg = "Unlock verification timed out: no opened LUKS mapper device found (invalid passphrase)"
                 AppLogger.w(TAG, errorMsg)

@@ -2,7 +2,6 @@ package mu.nada.unlocker.security
 
 import mu.nada.unlocker.data.KeyManager
 import org.bouncycastle.jce.provider.BouncyCastleProvider
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -30,46 +29,58 @@ class TofuHostKeyVerifierTest {
     }
 
     @Test
-    fun testVerify_pinnedHostMatches() {
+    fun testVerify_deviceCentricMatchesRegardlessOfIp() {
         val kpg = KeyPairGenerator.getInstance("Ed25519", BouncyCastleProvider.PROVIDER_NAME)
         val key = kpg.generateKeyPair().public
         val expectedFp = FingerprintUtils.getSha256Fingerprint(key)
 
-        `when`(hostKeyManager.getPinnedFingerprint("192.168.43.1", 22)).thenReturn(expectedFp)
+        `when`(hostKeyManager.isFingerprintTrusted(expectedFp)).thenReturn(true)
 
         val verifier = TofuHostKeyVerifier(hostKeyManager)
-        val verified = verifier.verify("192.168.43.1", 22, key)
 
-        assertTrue("Expected pinned key to verify successfully", verified)
+        // Same laptop key must be accepted across USB, Hotspot, and Wi-Fi IPs without prompting!
+        assertTrue(verifier.verify("10.77.78.206", 22, key))
+        assertTrue(verifier.verify("10.137.172.122", 22, key))
+        assertTrue(verifier.verify("10.193.60.143", 22, key))
     }
 
     @Test
-    fun testVerify_pinnedHostMismatchRejectsAndReportsMitm() {
+    fun testVerify_untrustedMismatchTriggersMitmWarning() {
         val kpg = KeyPairGenerator.getInstance("Ed25519", BouncyCastleProvider.PROVIDER_NAME)
-        val key = kpg.generateKeyPair().public
-        val differentKey = kpg.generateKeyPair().public
-        val originalFp = FingerprintUtils.getSha256Fingerprint(key)
+        val trustedKey = kpg.generateKeyPair().public
+        val rogueKey = kpg.generateKeyPair().public
+        val rogueFp = FingerprintUtils.getSha256Fingerprint(rogueKey)
 
-        `when`(hostKeyManager.getPinnedFingerprint("192.168.43.1", 22)).thenReturn(originalFp)
+        `when`(hostKeyManager.isFingerprintTrusted(rogueFp)).thenReturn(false)
+        `when`(hostKeyManager.hasAnyTrustedKeys()).thenReturn(true)
 
-        val verifier = TofuHostKeyVerifier(hostKeyManager)
-        val verified = verifier.verify("192.168.43.1", 22, differentKey)
+        var reportedMismatch = false
+        val verifier = TofuHostKeyVerifier(
+            hostKeyManager = hostKeyManager,
+            tofuPrompt = { _, _, _, _, isMismatch ->
+                reportedMismatch = isMismatch
+                TofuDecision.REJECT
+            }
+        )
 
-        assertFalse("Expected host key mismatch to fail verification", verified)
-        assertTrue(verifier.lastVerificationError?.contains("HOST KEY MISMATCH") == true)
-        assertTrue(verifier.lastVerificationError?.contains("MitM attack") == true)
+        val verified = verifier.verify("10.193.60.100", 22, rogueKey)
+        assertFalse(verified)
+        assertTrue(reportedMismatch)
+        assertTrue(verifier.lastVerificationError?.contains("rejected") == true)
     }
 
     @Test
     fun testVerify_tofuTrustOnce() {
         val kpg = KeyPairGenerator.getInstance("Ed25519", BouncyCastleProvider.PROVIDER_NAME)
         val key = kpg.generateKeyPair().public
+        val fp = FingerprintUtils.getSha256Fingerprint(key)
 
-        `when`(hostKeyManager.getPinnedFingerprint("192.168.43.1", 22)).thenReturn(null)
+        `when`(hostKeyManager.isFingerprintTrusted(fp)).thenReturn(false)
+        `when`(hostKeyManager.hasAnyTrustedKeys()).thenReturn(false)
 
         val verifier = TofuHostKeyVerifier(
             hostKeyManager = hostKeyManager,
-            tofuPrompt = { _, _, _, _ -> TofuDecision.TRUST_ONCE }
+            tofuPrompt = { _, _, _, _, _ -> TofuDecision.TRUST_ONCE }
         )
 
         val verified = verifier.verify("192.168.43.1", 22, key)
@@ -80,12 +91,14 @@ class TofuHostKeyVerifierTest {
     fun testVerify_tofuReject() {
         val kpg = KeyPairGenerator.getInstance("Ed25519", BouncyCastleProvider.PROVIDER_NAME)
         val key = kpg.generateKeyPair().public
+        val fp = FingerprintUtils.getSha256Fingerprint(key)
 
-        `when`(hostKeyManager.getPinnedFingerprint("192.168.43.1", 22)).thenReturn(null)
+        `when`(hostKeyManager.isFingerprintTrusted(fp)).thenReturn(false)
+        `when`(hostKeyManager.hasAnyTrustedKeys()).thenReturn(false)
 
         val verifier = TofuHostKeyVerifier(
             hostKeyManager = hostKeyManager,
-            tofuPrompt = { _, _, _, _ -> TofuDecision.REJECT }
+            tofuPrompt = { _, _, _, _, _ -> TofuDecision.REJECT }
         )
 
         val verified = verifier.verify("192.168.43.1", 22, key)

@@ -3,9 +3,6 @@ package mu.nada.unlocker.data
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import mu.nada.unlocker.log.AppLogger
 import mu.nada.unlocker.security.HostKeyManager
@@ -115,29 +112,38 @@ class NetworkScanner {
 
     /**
      * Fast Discovery Mode:
-     * 1. Probe cached IPs for active channels first (<200-300ms).
-     * 2. If no cache hit, prioritize scanning USB -> Hotspot -> LAN and return on first confirmed target.
+     * 1. Probe cached IPs for enabled active channels first (<200-300ms).
+     * 2. If no cache hit, prioritize scanning in custom channelPriority order and return on first confirmed target.
      */
     suspend fun fastDiscovery(
         hostKeyManager: HostKeyManager? = null,
         port: Int = 22,
         timeoutMs: Int = 250
     ): DiscoveredDevice? = withContext(Dispatchers.IO) {
-        val activeIfaces = getEligibleInterfaces()
-        if (activeIfaces.isEmpty()) {
-            AppLogger.d(TAG, "Fast discovery: No active eligible interfaces detected")
-            // Try fallback common hotspot subnets
-            return@withContext probeCommonHotspotGateways(port, timeoutMs)
+        val channelPriority = hostKeyManager?.getChannelPriority() ?: listOf(NetworkChannel.USB, NetworkChannel.HOTSPOT, NetworkChannel.LAN)
+        val activeIfaces = getEligibleInterfaces().filter { iface ->
+            val ch = classifyInterface(iface.name)
+            hostKeyManager?.isChannelEnabled(ch) ?: true
         }
 
-        // 1. Check cached IPs for active interface channels
+        if (activeIfaces.isEmpty()) {
+            AppLogger.d(TAG, "Fast discovery: No active enabled interfaces detected")
+            if (hostKeyManager?.isChannelEnabled(NetworkChannel.HOTSPOT) != false) {
+                return@withContext probeCommonHotspotGateways(port, timeoutMs)
+            }
+            return@withContext null
+        }
+
+        // 1. Check cached IPs for active enabled interface channels
         if (hostKeyManager != null) {
             val cachedTargets = mutableListOf<Pair<String, NetworkChannel>>()
             for (iface in activeIfaces) {
                 val channel = classifyInterface(iface.name)
-                val cachedIp = hostKeyManager.getLastIp(channel)
-                if (cachedIp != null) {
-                    cachedTargets.add(Pair(cachedIp, channel))
+                if (hostKeyManager.isChannelEnabled(channel)) {
+                    val cachedIp = hostKeyManager.getLastIp(channel)
+                    if (cachedIp != null) {
+                        cachedTargets.add(Pair(cachedIp, channel))
+                    }
                 }
             }
 
@@ -155,13 +161,11 @@ class NetworkScanner {
             }
         }
 
-        // 2. Prioritize channels: USB -> Hotspot -> LAN
+        // 2. Prioritize channels according to user configuration
         val sortedIfaces = activeIfaces.sortedBy { iface ->
-            when (classifyInterface(iface.name)) {
-                NetworkChannel.USB -> 0
-                NetworkChannel.HOTSPOT -> 1
-                NetworkChannel.LAN -> 2
-            }
+            val ch = classifyInterface(iface.name)
+            val index = channelPriority.indexOf(ch)
+            if (index >= 0) index else 999
         }
 
         for (iface in sortedIfaces) {
@@ -177,7 +181,11 @@ class NetworkScanner {
         }
 
         // 3. Fallback hotspot gateways check
-        probeCommonHotspotGateways(port, timeoutMs)
+        if (hostKeyManager?.isChannelEnabled(NetworkChannel.HOTSPOT) != false) {
+            probeCommonHotspotGateways(port, timeoutMs)
+        } else {
+            null
+        }
     }
 
     private suspend fun probeCommonHotspotGateways(port: Int, timeoutMs: Int): DiscoveredDevice? = withContext(Dispatchers.IO) {
@@ -198,12 +206,16 @@ class NetworkScanner {
     suspend fun scanSubnetForLuks(
         targetInterface: NetworkInterface? = null,
         maxHosts: Int = 1024,
-        timeoutMs: Int = 250
+        timeoutMs: Int = 250,
+        hostKeyManager: HostKeyManager? = null
     ): List<DiscoveredDevice> = withContext(Dispatchers.IO) {
         val interfaces = if (targetInterface != null) {
             listOf(targetInterface)
         } else {
-            getEligibleInterfaces()
+            getEligibleInterfaces().filter { iface ->
+                val ch = classifyInterface(iface.name)
+                hostKeyManager?.isChannelEnabled(ch) ?: true
+            }
         }
 
         val allTasks = interfaces.flatMap { iface ->
@@ -222,16 +234,18 @@ class NetworkScanner {
         }.toMutableList()
 
         if (allTasks.isEmpty() && targetInterface == null) {
-            COMMON_HOTSPOT_SUBNETS.forEach { gatewayIp ->
-                try {
-                    val addr = InetAddress.getByName(gatewayIp) as? Inet4Address
-                    if (addr != null) {
-                        val ipList = calculateSubnetIps(addr, 24.toShort(), 254)
-                        ipList.map { ip ->
-                            allTasks.add(async { probeHost(ip, "hotspot", 22, timeoutMs, NetworkChannel.HOTSPOT) })
+            if (hostKeyManager?.isChannelEnabled(NetworkChannel.HOTSPOT) != false) {
+                COMMON_HOTSPOT_SUBNETS.forEach { gatewayIp ->
+                    try {
+                        val addr = InetAddress.getByName(gatewayIp) as? Inet4Address
+                        if (addr != null) {
+                            val ipList = calculateSubnetIps(addr, 24.toShort(), 254)
+                            ipList.map { ip ->
+                                allTasks.add(async { probeHost(ip, "hotspot", 22, timeoutMs, NetworkChannel.HOTSPOT) })
+                            }
                         }
-                    }
-                } catch (_: Exception) {}
+                    } catch (_: Exception) {}
+                }
             }
         }
 

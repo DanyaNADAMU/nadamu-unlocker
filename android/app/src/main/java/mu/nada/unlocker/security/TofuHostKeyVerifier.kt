@@ -10,7 +10,13 @@ enum class TofuDecision {
     REJECT
 }
 
-typealias TofuPromptCallback = (hostname: String, port: Int, fingerprint: String, keyType: String) -> TofuDecision
+typealias TofuPromptCallback = (
+    hostname: String,
+    port: Int,
+    fingerprint: String,
+    keyType: String,
+    isUntrustedMismatch: Boolean
+) -> TofuDecision
 
 class TofuHostKeyVerifier(
     private val hostKeyManager: HostKeyManager,
@@ -29,51 +35,54 @@ class TofuHostKeyVerifier(
         lastVerificationError = null
         val fingerprint = FingerprintUtils.getSha256Fingerprint(key)
         val keyType = FingerprintUtils.getKeyTypeName(key)
-        val pinnedFingerprint = hostKeyManager.getPinnedFingerprint(hostname, port)
 
-        if (pinnedFingerprint != null) {
-            if (pinnedFingerprint == fingerprint) {
-                AppLogger.i(TAG, "Host key verified successfully for $hostname:$port ($fingerprint)")
-                return true
-            } else {
-                val errorMsg = "HOST KEY MISMATCH on $hostname:$port! Expected: $pinnedFingerprint, Got: $fingerprint. Potential MitM attack!"
-                AppLogger.e(TAG, errorMsg)
-                lastVerificationError = errorMsg
-                return false
-            }
+        // 1. Device-Centric check: is this laptop fingerprint already trusted?
+        if (hostKeyManager.isFingerprintTrusted(fingerprint)) {
+            AppLogger.i(TAG, "Host key verified with trusted laptop fingerprint ($fingerprint) on $hostname:$port")
+            return true
         }
 
-        // Host not yet pinned - TOFU flow
-        AppLogger.i(TAG, "Unknown host key detected for $hostname:$port ($keyType, $fingerprint)")
+        val hasExistingTrustedKeys = hostKeyManager.hasAnyTrustedKeys()
+
+        if (hasExistingTrustedKeys) {
+            val errorMsg = "UNTRUSTED HOST KEY on $hostname:$port ($fingerprint)! Does not match your trusted laptop key(s)."
+            AppLogger.w(TAG, errorMsg)
+        } else {
+            AppLogger.i(TAG, "Initial setup: host key detected for $hostname:$port ($keyType, $fingerprint)")
+        }
 
         if (tofuPrompt != null) {
-            val decision = tofuPrompt.invoke(hostname, port, fingerprint, keyType)
+            val decision = tofuPrompt.invoke(hostname, port, fingerprint, keyType, hasExistingTrustedKeys)
             return when (decision) {
                 TofuDecision.TRUST_AND_PIN -> {
-                    hostKeyManager.pinHostKey(hostname, port, fingerprint)
-                    AppLogger.i(TAG, "TOFU: Trusted and pinned host key for $hostname:$port")
+                    hostKeyManager.trustFingerprint(fingerprint, "Laptop ($hostname)")
+                    AppLogger.i(TAG, "TOFU: Trusted and saved host key fingerprint ($fingerprint)")
                     true
                 }
                 TofuDecision.TRUST_ONCE -> {
-                    AppLogger.i(TAG, "TOFU: Trusted once for $hostname:$port")
+                    AppLogger.i(TAG, "TOFU: Trusted once for $hostname:$port ($fingerprint)")
                     true
                 }
                 TofuDecision.REJECT -> {
-                    val errorMsg = "Host key rejected for $hostname:$port ($fingerprint)"
-                    AppLogger.w(TAG, errorMsg)
-                    lastVerificationError = errorMsg
+                    val rejectedMsg = "Host key rejected for $hostname:$port ($fingerprint)"
+                    AppLogger.w(TAG, rejectedMsg)
+                    lastVerificationError = rejectedMsg
                     false
                 }
             }
         }
 
-        if (autoPinOnFirstUse) {
-            hostKeyManager.pinHostKey(hostname, port, fingerprint)
-            AppLogger.i(TAG, "Auto-pinned host key on first use for $hostname:$port")
+        if (autoPinOnFirstUse && !hasExistingTrustedKeys) {
+            hostKeyManager.trustFingerprint(fingerprint, "Laptop ($hostname)")
+            AppLogger.i(TAG, "Auto-pinned laptop host key on first use ($fingerprint)")
             return true
         }
 
-        val errorMsg = "Untrusted host key for $hostname:$port ($fingerprint) and no TOFU prompt provided"
+        val errorMsg = if (hasExistingTrustedKeys) {
+            "Host key mismatch / Untrusted host on $hostname:$port ($fingerprint) - Potential MitM attack!"
+        } else {
+            "Untrusted host key for $hostname:$port ($fingerprint) and no TOFU prompt available"
+        }
         AppLogger.w(TAG, errorMsg)
         lastVerificationError = errorMsg
         return false

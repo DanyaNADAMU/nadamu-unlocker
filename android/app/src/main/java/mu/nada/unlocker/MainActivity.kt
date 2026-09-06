@@ -9,10 +9,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -33,14 +33,15 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import mu.nada.unlocker.data.DiscoveredDevice
+import mu.nada.unlocker.data.DiscoveryMode
 import mu.nada.unlocker.data.KeyManager
 import mu.nada.unlocker.data.NetworkChannel
 import mu.nada.unlocker.data.NetworkScanner
 import mu.nada.unlocker.log.AppLogger
-import mu.nada.unlocker.log.LogEvent
 import mu.nada.unlocker.log.LogLevel
 import mu.nada.unlocker.security.HostKeyManager
 import mu.nada.unlocker.security.TofuDecision
+import mu.nada.unlocker.security.TrustedHostKey
 import mu.nada.unlocker.ssh.SshUnlocker
 import mu.nada.unlocker.ssh.UnlockResult
 
@@ -95,6 +96,7 @@ data class TofuPromptRequest(
     val port: Int,
     val fingerprint: String,
     val keyType: String,
+    val isUntrustedMismatch: Boolean,
     val deferred: CompletableDeferred<TofuDecision>
 )
 
@@ -119,9 +121,17 @@ fun UnlockScreen(
     var pubKey by remember { mutableStateOf(keyManager.getPublicKeyOpenSsh()) }
     var showImportDialog by remember { mutableStateOf(false) }
     var showRegenerateDialog by remember { mutableStateOf(false) }
-    var showPinnedHostsDialog by remember { mutableStateOf(false) }
+    var showSettingsDialog by remember { mutableStateOf(false) }
+    var showAddKeyDialog by remember { mutableStateOf(false) }
     var importKeyInput by remember { mutableStateOf("") }
     var importError by remember { mutableStateOf<String?>(null) }
+
+    // Settings state
+    var discoveryMode by remember { mutableStateOf(hostKeyManager.getDiscoveryMode()) }
+    var channelPriority by remember { mutableStateOf(hostKeyManager.getChannelPriority()) }
+    var trustedKeysList by remember { mutableStateOf(hostKeyManager.getTrustedKeys()) }
+    var mapperTarget by remember { mutableStateOf(hostKeyManager.getMapperTarget()) }
+    var pollTimeoutSec by remember { mutableStateOf(hostKeyManager.getPollTimeoutSeconds()) }
 
     // TOFU Dialog State
     var tofuRequest by remember { mutableStateOf<TofuPromptRequest?>(null) }
@@ -137,23 +147,41 @@ fun UnlockScreen(
         }
     }
 
-    // TOFU Dialog
+    // TOFU / MitM Alert Dialog
     tofuRequest?.let { req ->
         AlertDialog(
             onDismissRequest = {
                 req.deferred.complete(TofuDecision.REJECT)
                 tofuRequest = null
             },
-            icon = { Icon(Icons.Default.Security, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-            title = { Text("Trust Host Key (TOFU)?", fontWeight = FontWeight.Bold) },
+            icon = {
+                Icon(
+                    if (req.isUntrustedMismatch) Icons.Default.Warning else Icons.Default.Security,
+                    contentDescription = null,
+                    tint = if (req.isUntrustedMismatch) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                )
+            },
+            title = {
+                Text(
+                    if (req.isUntrustedMismatch) "⚠️ UNTRUSTED HOST KEY (MitM Alert!)" else "Trust Laptop SSH Key (TOFU)?",
+                    fontWeight = FontWeight.Bold,
+                    color = if (req.isUntrustedMismatch) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                )
+            },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "First time connecting to Dropbear on this target. Verify the host key fingerprint before sending disk password:",
+                        if (req.isUntrustedMismatch) {
+                            "WARNING: The detected machine's fingerprint DOES NOT MATCH any of your trusted laptop keys! This could be a Man-in-the-Middle (MitM) attack or an unauthorized device on the network."
+                        } else {
+                            "First time connecting to your laptop. Verify and save the host key fingerprint to prevent network tampering:"
+                        },
                         fontSize = 13.sp
                     )
                     Card(
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2A2A)),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (req.isUntrustedMismatch) Color(0xFF3E1B1B) else Color(0xFF2A2A2A)
+                        ),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -164,7 +192,7 @@ fun UnlockScreen(
                                     "Fingerprint:\n${req.fingerprint}",
                                     fontSize = 11.sp,
                                     fontFamily = FontFamily.Monospace,
-                                    color = MaterialTheme.colorScheme.primary
+                                    color = if (req.isUntrustedMismatch) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                                 )
                             }
                         }
@@ -172,11 +200,15 @@ fun UnlockScreen(
                 }
             },
             confirmButton = {
-                Button(onClick = {
-                    req.deferred.complete(TofuDecision.TRUST_AND_PIN)
-                    tofuRequest = null
-                }) {
-                    Text("Trust & Pin")
+                Button(
+                    onClick = {
+                        req.deferred.complete(TofuDecision.TRUST_AND_PIN)
+                        trustedKeysList = hostKeyManager.getTrustedKeys()
+                        tofuRequest = null
+                    },
+                    colors = if (req.isUntrustedMismatch) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error) else ButtonDefaults.buttonColors()
+                ) {
+                    Text(if (req.isUntrustedMismatch) "Trust & Pin Anyway" else "Trust & Pin Laptop")
                 }
             },
             dismissButton = {
@@ -198,42 +230,206 @@ fun UnlockScreen(
         )
     }
 
-    // Pinned Hosts Dialog
-    if (showPinnedHostsDialog) {
-        val pinnedHosts = hostKeyManager.getAllPinnedHosts()
+    // Settings & Configuration Dialog
+    if (showSettingsDialog) {
+        var activeTab by remember { mutableStateOf(0) }
         AlertDialog(
-            onDismissRequest = { showPinnedHostsDialog = false },
-            title = { Text("Pinned SSH Host Keys") },
+            onDismissRequest = { showSettingsDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Default.Settings, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Text("Settings & Security", fontWeight = FontWeight.Bold)
+                }
+            },
             text = {
-                Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (pinnedHosts.isEmpty()) {
-                        Text("No pinned hosts yet. Host keys are pinned via TOFU on first unlock.", fontSize = 13.sp, color = Color.Gray)
-                    } else {
-                        LazyColumn(modifier = Modifier.heightIn(max = 240.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            items(pinnedHosts.entries.toList()) { entry ->
+                Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    TabRow(selectedTabIndex = activeTab) {
+                        Tab(selected = activeTab == 0, onClick = { activeTab = 0 }, text = { Text("Network", fontSize = 12.sp) })
+                        Tab(selected = activeTab == 1, onClick = { activeTab = 1 }, text = { Text("Trusted Keys", fontSize = 12.sp) })
+                        Tab(selected = activeTab == 2, onClick = { activeTab = 2 }, text = { Text("Options", fontSize = 12.sp) })
+                    }
+
+                    when (activeTab) {
+                        // TAB 0: Network & Channel Priority
+                        0 -> {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("Default Action Mode:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    FilterChip(
+                                        selected = discoveryMode == DiscoveryMode.FAST,
+                                        onClick = {
+                                            discoveryMode = DiscoveryMode.FAST
+                                            hostKeyManager.setDiscoveryMode(DiscoveryMode.FAST)
+                                        },
+                                        label = { Text("Fast Auto-Unlock", fontSize = 11.sp) }
+                                    )
+                                    FilterChip(
+                                        selected = discoveryMode == DiscoveryMode.FULL,
+                                        onClick = {
+                                            discoveryMode = DiscoveryMode.FULL
+                                            hostKeyManager.setDiscoveryMode(DiscoveryMode.FULL)
+                                        },
+                                        label = { Text("Full Scan", fontSize = 11.sp) }
+                                    )
+                                }
+
+                                HorizontalDivider(color = Color.DarkGray)
+                                Text("Channel Priorities & Active Channels:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+
+                                LazyColumn(modifier = Modifier.heightIn(max = 220.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    itemsIndexed(channelPriority) { index, channel ->
+                                        val isEnabled = hostKeyManager.isChannelEnabled(channel)
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .background(Color(0xFF2A2A2A), RoundedCornerShape(8.dp))
+                                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                Checkbox(
+                                                    checked = isEnabled,
+                                                    onCheckedChange = { checked ->
+                                                        hostKeyManager.setChannelEnabled(channel, checked)
+                                                        channelPriority = hostKeyManager.getChannelPriority()
+                                                    }
+                                                )
+                                                Text(
+                                                    "${index + 1}. ${channel.name}",
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                            }
+                                            Row {
+                                                IconButton(
+                                                    onClick = {
+                                                        if (index > 0) {
+                                                            val reordered = channelPriority.toMutableList()
+                                                            val item = reordered.removeAt(index)
+                                                            reordered.add(index - 1, item)
+                                                            channelPriority = reordered
+                                                            hostKeyManager.setChannelPriority(reordered)
+                                                        }
+                                                    },
+                                                    enabled = index > 0,
+                                                    modifier = Modifier.size(28.dp)
+                                                ) {
+                                                    Icon(Icons.Default.ArrowUpward, contentDescription = "Move Up", modifier = Modifier.size(16.dp))
+                                                }
+                                                IconButton(
+                                                    onClick = {
+                                                        if (index < channelPriority.size - 1) {
+                                                            val reordered = channelPriority.toMutableList()
+                                                            val item = reordered.removeAt(index)
+                                                            reordered.add(index + 1, item)
+                                                            channelPriority = reordered
+                                                            hostKeyManager.setChannelPriority(reordered)
+                                                        }
+                                                    },
+                                                    enabled = index < channelPriority.size - 1,
+                                                    modifier = Modifier.size(28.dp)
+                                                ) {
+                                                    Icon(Icons.Default.ArrowDownward, contentDescription = "Move Down", modifier = Modifier.size(16.dp))
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // TAB 1: Device-Centric Trusted Keys
+                        1 -> {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .background(Color(0xFF2A2A2A), RoundedCornerShape(6.dp))
-                                        .padding(8.dp),
+                                    modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(entry.key, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                        Text(entry.value, fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = Color.Gray)
+                                    Text("Trusted Laptop Fingerprints:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    TextButton(onClick = { showAddKeyDialog = true }) {
+                                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Add Key", fontSize = 11.sp)
                                     }
-                                    IconButton(
-                                        onClick = {
-                                            val parts = entry.key.split(":")
-                                            val host = parts[0]
-                                            val port = parts.getOrNull(1)?.toIntOrNull() ?: 22
-                                            hostKeyManager.unpinHostKey(host, port)
-                                        },
-                                        modifier = Modifier.size(24.dp)
-                                    ) {
-                                        Icon(Icons.Default.Delete, contentDescription = "Unpin", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                                }
+
+                                if (trustedKeysList.isEmpty()) {
+                                    Text(
+                                        "No trusted laptop keys pinned yet. The host key will be saved on your first unlock via TOFU.",
+                                        fontSize = 12.sp,
+                                        color = Color.Gray
+                                    )
+                                } else {
+                                    LazyColumn(modifier = Modifier.heightIn(max = 220.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        items(trustedKeysList) { keyItem ->
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .background(Color(0xFF2A2A2A), RoundedCornerShape(8.dp))
+                                                    .padding(8.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(keyItem.label, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                                    Text(
+                                                        keyItem.fingerprint,
+                                                        fontSize = 10.sp,
+                                                        fontFamily = FontFamily.Monospace,
+                                                        color = MaterialTheme.colorScheme.primary
+                                                    )
+                                                }
+                                                IconButton(
+                                                    onClick = {
+                                                        hostKeyManager.untrustFingerprint(keyItem.fingerprint)
+                                                        trustedKeysList = hostKeyManager.getTrustedKeys()
+                                                    },
+                                                    modifier = Modifier.size(28.dp)
+                                                ) {
+                                                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                                                }
+                                            }
+                                        }
                                     }
+                                }
+                            }
+                        }
+
+                        // TAB 2: Advanced Options
+                        2 -> {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedTextField(
+                                    value = mapperTarget,
+                                    onValueChange = {
+                                        mapperTarget = it
+                                        hostKeyManager.setMapperTarget(it)
+                                    },
+                                    label = { Text("LUKS Mapper Target (e.g. auto, nvme0n1p3_crypt)") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true
+                                )
+                                OutlinedTextField(
+                                    value = pollTimeoutSec.toString(),
+                                    onValueChange = {
+                                        val sec = it.toIntOrNull() ?: 15
+                                        pollTimeoutSec = sec
+                                        hostKeyManager.setPollTimeoutSeconds(sec)
+                                    },
+                                    label = { Text("Mapper Poll Timeout (seconds)") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true
+                                )
+                                Button(
+                                    onClick = {
+                                        hostKeyManager.clearCachedIps()
+                                        Toast.makeText(context, "IP caches cleared", Toast.LENGTH_SHORT).show()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF37474F)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Clear Network IP Caches", fontSize = 12.sp)
                                 }
                             }
                         }
@@ -241,18 +437,53 @@ fun UnlockScreen(
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showPinnedHostsDialog = false }) {
-                    Text("Close")
+                TextButton(onClick = { showSettingsDialog = false }) {
+                    Text("Done")
+                }
+            }
+        )
+    }
+
+    // Add Manual Fingerprint Dialog
+    if (showAddKeyDialog) {
+        var newFpInput by remember { mutableStateOf("") }
+        var newLabelInput by remember { mutableStateOf("Laptop") }
+        AlertDialog(
+            onDismissRequest = { showAddKeyDialog = false },
+            title = { Text("Add Trusted Fingerprint") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = newLabelInput,
+                        onValueChange = { newLabelInput = it },
+                        label = { Text("Device Label") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = newFpInput,
+                        onValueChange = { newFpInput = it },
+                        label = { Text("Fingerprint (SHA256:...)") },
+                        placeholder = { Text("SHA256:JajCs+5L6c1Ey...") },
+                        modifier = Modifier.fillMaxWidth(),
+                        textStyle = androidx.compose.ui.text.TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    if (newFpInput.isNotBlank()) {
+                        hostKeyManager.trustFingerprint(newFpInput.trim(), newLabelInput.trim())
+                        trustedKeysList = hostKeyManager.getTrustedKeys()
+                        showAddKeyDialog = false
+                    }
+                }) {
+                    Text("Add")
                 }
             },
             dismissButton = {
-                if (pinnedHosts.isNotEmpty()) {
-                    TextButton(onClick = {
-                        hostKeyManager.clearAllPinnedHosts()
-                        showPinnedHostsDialog = false
-                    }) {
-                        Text("Clear All", color = MaterialTheme.colorScheme.error)
-                    }
+                TextButton(onClick = { showAddKeyDialog = false }) {
+                    Text("Cancel")
                 }
             }
         )
@@ -375,10 +606,12 @@ fun UnlockScreen(
                 port = targetPort,
                 password = password,
                 privateKeyPem = privKeyPem,
+                mapperTarget = hostKeyManager.getMapperTarget(),
+                pollTimeoutSeconds = hostKeyManager.getPollTimeoutSeconds(),
                 hostKeyManager = hostKeyManager,
-                tofuPrompt = { host, port, fp, type ->
+                tofuPrompt = { host, port, fp, type, isMismatch ->
                     val def = CompletableDeferred<TofuDecision>()
-                    tofuRequest = TofuPromptRequest(host, port, fp, type, def)
+                    tofuRequest = TofuPromptRequest(host, port, fp, type, isMismatch, def)
                     kotlinx.coroutines.runBlocking { def.await() }
                 }
             )
@@ -425,15 +658,15 @@ fun UnlockScreen(
                 )
             }
             Row {
-                IconButton(onClick = { showPinnedHostsDialog = true }) {
-                    Icon(Icons.Default.VpnKey, contentDescription = "Pinned Host Keys", tint = MaterialTheme.colorScheme.primary)
+                IconButton(onClick = { showSettingsDialog = true }) {
+                    Icon(Icons.Default.Settings, contentDescription = "Settings", tint = MaterialTheme.colorScheme.primary)
                 }
                 IconButton(onClick = {
                     scope.launch {
                         isScanning = true
                         val activeIfaces = scanner.getEligibleInterfaces().joinToString { it.name }
                         AppLogger.i("NetworkScanner", "Full subnet scan on active networks ($activeIfaces)...")
-                        discoveredDevices = scanner.scanSubnetForLuks()
+                        discoveredDevices = scanner.scanSubnetForLuks(hostKeyManager = hostKeyManager)
                         if (discoveredDevices.isEmpty()) {
                             AppLogger.w("NetworkScanner", "No Dropbear targets found on port 22.")
                         } else {
@@ -471,7 +704,7 @@ fun UnlockScreen(
             leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) }
         )
 
-        // Action Button: Fast Auto-Unlock
+        // Action Button: Fast Unlock / Full Scan based on configured mode
         Button(
             onClick = {
                 scope.launch {
@@ -479,17 +712,32 @@ fun UnlockScreen(
                         AppLogger.w("UnlockScreen", "Please enter LUKS disk password first.")
                         return@launch
                     }
-                    isUnlocking = true
-                    AppLogger.i("UnlockScreen", "Starting fast auto-discovery & unlock...")
 
-                    val target = scanner.fastDiscovery(hostKeyManager = hostKeyManager)
-                    if (target == null) {
-                        AppLogger.e("UnlockScreen", "No laptop found (port 22 unreachable on Wi-Fi / Hotspot / USB).")
-                        AppLogger.i("UnlockScreen", "Hint: Ensure laptop is in initramfs boot stage with Dropbear listening.")
+                    if (discoveryMode == DiscoveryMode.FAST) {
+                        isUnlocking = true
+                        AppLogger.i("UnlockScreen", "Starting fast auto-discovery & unlock...")
+
+                        val target = scanner.fastDiscovery(hostKeyManager = hostKeyManager)
+                        if (target == null) {
+                            AppLogger.e("UnlockScreen", "No laptop found (port 22 unreachable on active enabled interfaces).")
+                            AppLogger.i("UnlockScreen", "Hint: Ensure laptop is in initramfs boot stage with Dropbear listening.")
+                        } else {
+                            performUnlock(target.ip, target.port, target.channel)
+                        }
+                        isUnlocking = false
                     } else {
-                        performUnlock(target.ip, target.port, target.channel)
+                        // Full scan mode
+                        isScanning = true
+                        AppLogger.i("UnlockScreen", "Scanning subnet for Dropbear devices...")
+                        discoveredDevices = scanner.scanSubnetForLuks(hostKeyManager = hostKeyManager)
+                        isScanning = false
+                        if (discoveredDevices.isNotEmpty()) {
+                            val target = discoveredDevices.first()
+                            performUnlock(target.ip, target.port, target.channel)
+                        } else {
+                            AppLogger.e("UnlockScreen", "No Dropbear targets found on full scan.")
+                        }
                     }
-                    isUnlocking = false
                 }
             },
             modifier = Modifier
@@ -503,9 +751,12 @@ fun UnlockScreen(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Connecting...", fontWeight = FontWeight.Bold)
             } else {
-                Icon(Icons.Default.Usb, contentDescription = null)
+                Icon(if (discoveryMode == DiscoveryMode.FAST) Icons.Default.Usb else Icons.Default.Search, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("FAST UNLOCK (AUTO)", fontWeight = FontWeight.Bold)
+                Text(
+                    if (discoveryMode == DiscoveryMode.FAST) "FAST UNLOCK (AUTO)" else "SCAN & UNLOCK (FULL)",
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
 
