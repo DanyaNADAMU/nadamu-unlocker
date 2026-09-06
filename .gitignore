@@ -29,7 +29,6 @@ lab/data/
 *.id_rsa
 *.jks
 *.keystore
-!android/app/keystore/release.jks
 !laptop/config/dropbear/authorized_keys.example
 .aider*
 

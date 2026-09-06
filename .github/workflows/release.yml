@@ -136,15 +136,8 @@ jobs:
           fi
 
           if [ "$SIGNED" = false ]; then
-            echo "Signing with repository permanent release keystore..."
-            REPO_KEYSTORE="android/app/keystore/release.jks"
-
-            "$APKSIGNER" sign --ks "$REPO_KEYSTORE" \
-              --ks-pass pass:nadamu-unlocker-2026 \
-              --ks-key-alias nadamu \
-              --key-pass pass:nadamu-unlocker-2026 \
-              --out "$FINAL_APK" \
-              app-aligned.apk
+            echo "ERROR: Release keystore secrets (ANDROID_KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS) are missing or invalid!"
+            exit 1
           fi
 
           rm -f app-aligned.apk
