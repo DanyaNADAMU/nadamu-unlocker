@@ -8,7 +8,6 @@ import mu.nada.unlocker.log.AppLogger
 import mu.nada.unlocker.security.FingerprintUtils
 import mu.nada.unlocker.security.HostKeyManager
 import net.schmizz.sshj.SSHClient
-import net.schmizz.sshj.transport.verification.PromiscuousVerifier
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.Inet4Address
@@ -118,14 +117,17 @@ class NetworkScanner {
     /**
      * Fast Discovery Mode:
      * 1. Probe cached IPs for enabled active channels first (<200-300ms).
-     * 2. If no cache hit, prioritize scanning in custom channelPriority order and return confirmed target (matching trusted fingerprint if multiple exist).
+     * 2. Scans channels in priority order, filters by banner regex (skips non-Dropbear),
+     *    and if trusted keys exist, ensures the candidate matches the trusted laptop fingerprint.
      */
     suspend fun fastDiscovery(
         hostKeyManager: HostKeyManager? = null,
-        port: Int = 22,
         timeoutMs: Int = 300
     ): DiscoveredDevice? = withContext(Dispatchers.IO) {
         val channelPriority = hostKeyManager?.getChannelPriority() ?: listOf(NetworkChannel.USB, NetworkChannel.HOTSPOT, NetworkChannel.LAN)
+        val targetPorts = hostKeyManager?.getTargetPorts() ?: listOf(22)
+        val bannerRegex = hostKeyManager?.getBannerRegex() ?: ".*dropbear.*"
+
         val activeIfaces = getEligibleInterfaces().filter { iface ->
             val ch = classifyInterface(iface.name)
             hostKeyManager?.isChannelEnabled(ch) ?: true
@@ -134,7 +136,7 @@ class NetworkScanner {
         if (activeIfaces.isEmpty()) {
             AppLogger.d(TAG, "Fast discovery: No active enabled interfaces detected")
             if (hostKeyManager?.isChannelEnabled(NetworkChannel.HOTSPOT) != false) {
-                return@withContext probeCommonHotspotGateways(port, timeoutMs)
+                return@withContext probeCommonHotspotGateways(targetPorts, bannerRegex, timeoutMs)
             }
             return@withContext null
         }
@@ -154,12 +156,18 @@ class NetworkScanner {
 
             if (cachedTargets.isNotEmpty()) {
                 AppLogger.d(TAG, "Probing cached channel IPs: ${cachedTargets.joinToString { "${it.second.name}:${it.first}" }}")
-                val probeDeferreds = cachedTargets.map { (ip, channel) ->
-                    async { probeHost(ip, channel.name, port, timeoutMs) }
+                val probeDeferreds = cachedTargets.flatMap { (ip, channel) ->
+                    targetPorts.map { port ->
+                        async { probeHost(ip, channel.name, port, timeoutMs, channel, bannerRegex) }
+                    }
                 }
                 val cachedHits = probeDeferreds.awaitAll().filterNotNull()
                 if (cachedHits.isNotEmpty()) {
-                    val target = cachedHits.first()
+                    val target = if (cachedHits.size > 1 && hostKeyManager.hasAnyTrustedKeys()) {
+                        findTrustedDeviceCandidate(cachedHits, hostKeyManager) ?: cachedHits.first()
+                    } else {
+                        cachedHits.first()
+                    }
                     AppLogger.i(TAG, "Fast discovery: Cache hit on ${target.ip}:${target.port} (${target.channel.name})")
                     return@withContext target
                 }
@@ -176,28 +184,45 @@ class NetworkScanner {
         for (iface in sortedIfaces) {
             val found = scanSubnetForLuks(iface, maxHosts = 1024, timeoutMs = timeoutMs, hostKeyManager = hostKeyManager)
             if (found.isNotEmpty()) {
-                // If multiple devices found in subnet, prioritize the one matching trusted fingerprint
-                val chosenDevice = if (found.size > 1 && hostKeyManager?.hasAnyTrustedKeys() == true) {
-                    val trustedCandidate = findTrustedDeviceCandidate(found, hostKeyManager)
-                    trustedCandidate ?: found.first()
+                // If user has trusted keys, only select the machine matching trusted fingerprint
+                val chosenDevice = if (hostKeyManager?.hasAnyTrustedKeys() == true) {
+                    val candidate = findTrustedDeviceCandidate(found, hostKeyManager)
+                    if (candidate != null) {
+                        candidate
+                    } else {
+                        AppLogger.d(TAG, "Found ${found.size} Dropbear device(s), but none matched trusted host fingerprint.")
+                        null
+                    }
                 } else {
+                    // First time setup: return first found Dropbear device
                     found.first()
                 }
 
-                if (hostKeyManager != null) {
-                    hostKeyManager.setLastIp(chosenDevice.channel, chosenDevice.ip)
+                if (chosenDevice != null) {
+                    if (hostKeyManager != null) {
+                        hostKeyManager.setLastIp(chosenDevice.channel, chosenDevice.ip)
+                    }
+                    AppLogger.i(TAG, "Fast discovery: Found matching target on ${chosenDevice.ip}:${chosenDevice.port} (${chosenDevice.interfaceName})")
+                    return@withContext chosenDevice
                 }
-                AppLogger.i(TAG, "Fast discovery: Found target on ${chosenDevice.ip}:${chosenDevice.port} (${chosenDevice.interfaceName})")
-                return@withContext chosenDevice
             }
         }
 
         // 3. Fallback hotspot gateways check
         if (hostKeyManager?.isChannelEnabled(NetworkChannel.HOTSPOT) != false) {
-            probeCommonHotspotGateways(port, timeoutMs)
-        } else {
-            null
+            val fallbackHit = probeCommonHotspotGateways(targetPorts, bannerRegex, timeoutMs)
+            if (fallbackHit != null) {
+                if (hostKeyManager?.hasAnyTrustedKeys() == true) {
+                    val fp = fallbackHit.fingerprint ?: fetchHostKeyFingerprint(fallbackHit.ip, fallbackHit.port)
+                    if (fp != null && hostKeyManager.isFingerprintTrusted(fp)) {
+                        return@withContext fallbackHit.copy(fingerprint = fp)
+                    }
+                } else {
+                    return@withContext fallbackHit
+                }
+            }
         }
+        null
     }
 
     private suspend fun findTrustedDeviceCandidate(
@@ -241,10 +266,16 @@ class NetworkScanner {
         }
     }
 
-    private suspend fun probeCommonHotspotGateways(port: Int, timeoutMs: Int): DiscoveredDevice? = withContext(Dispatchers.IO) {
-        val tasks = COMMON_HOTSPOT_SUBNETS.map { gatewayIp ->
-            async {
-                probeHost(gatewayIp, "hotspot-fallback", port, timeoutMs)
+    private suspend fun probeCommonHotspotGateways(
+        targetPorts: List<Int>,
+        bannerRegex: String,
+        timeoutMs: Int
+    ): DiscoveredDevice? = withContext(Dispatchers.IO) {
+        val tasks = COMMON_HOTSPOT_SUBNETS.flatMap { gatewayIp ->
+            targetPorts.map { port ->
+                async {
+                    probeHost(gatewayIp, "hotspot-fallback", port, timeoutMs, NetworkChannel.HOTSPOT, bannerRegex)
+                }
             }
         }
         val found = tasks.awaitAll().filterNotNull()
@@ -252,7 +283,7 @@ class NetworkScanner {
     }
 
     /**
-     * Scan network prefixes concurrently for port 22 dropbear/SSH.
+     * Scan network prefixes concurrently for dropbear/SSH matching port and banner regex.
      */
     suspend fun scanSubnetForLuks(
         targetInterface: NetworkInterface? = null,
@@ -260,6 +291,9 @@ class NetworkScanner {
         timeoutMs: Int = 300,
         hostKeyManager: HostKeyManager? = null
     ): List<DiscoveredDevice> = withContext(Dispatchers.IO) {
+        val targetPorts = hostKeyManager?.getTargetPorts() ?: listOf(22)
+        val bannerRegex = hostKeyManager?.getBannerRegex() ?: ".*dropbear.*"
+
         val interfaces = if (targetInterface != null) {
             listOf(targetInterface)
         } else {
@@ -276,9 +310,11 @@ class NetworkScanner {
                 val inet4 = addr.address as Inet4Address
                 val prefixLength = addr.networkPrefixLength
                 val ipList = calculateSubnetIps(inet4, prefixLength, maxHosts)
-                ipList.map { ip ->
-                    async {
-                        probeHost(ip, iface.name, 22, timeoutMs, channel)
+                ipList.flatMap { ip ->
+                    targetPorts.map { port ->
+                        async {
+                            probeHost(ip, iface.name, port, timeoutMs, channel, bannerRegex)
+                        }
                     }
                 }
             }
@@ -291,8 +327,10 @@ class NetworkScanner {
                         val addr = InetAddress.getByName(gatewayIp) as? Inet4Address
                         if (addr != null) {
                             val ipList = calculateSubnetIps(addr, 24.toShort(), 254)
-                            ipList.map { ip ->
-                                allTasks.add(async { probeHost(ip, "hotspot", 22, timeoutMs, NetworkChannel.HOTSPOT) })
+                            ipList.forEach { ip ->
+                                targetPorts.forEach { port ->
+                                    allTasks.add(async { probeHost(ip, "hotspot", port, timeoutMs, NetworkChannel.HOTSPOT, bannerRegex) })
+                                }
                             }
                         }
                     } catch (_: Exception) {}
@@ -305,22 +343,30 @@ class NetworkScanner {
     }
 
     /**
-     * Probe single host on port 22 with fast socket connect & banner check.
+     * Probe single host on target port with fast socket connect & banner regex check.
      */
     suspend fun probeHost(
         ip: String,
         ifaceName: String,
         port: Int = 22,
         timeoutMs: Int = 300,
-        channel: NetworkChannel = classifyInterface(ifaceName)
+        channel: NetworkChannel = classifyInterface(ifaceName),
+        bannerRegex: String = ".*dropbear.*"
     ): DiscoveredDevice? = withContext(Dispatchers.IO) {
         try {
             Socket().use { socket ->
                 socket.connect(InetSocketAddress(ip, port), timeoutMs)
                 socket.soTimeout = 400
                 val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
-                val banner = reader.readLine() ?: "SSH-Unknown"
-                if (banner.contains("dropbear", ignoreCase = true) || banner.contains("SSH", ignoreCase = true)) {
+                val banner = reader.readLine() ?: return@withContext null
+
+                val matches = try {
+                    banner.contains("dropbear", ignoreCase = true) || banner.matches(Regex(bannerRegex, RegexOption.IGNORE_CASE))
+                } catch (_: Exception) {
+                    banner.contains("dropbear", ignoreCase = true)
+                }
+
+                if (matches) {
                     return@withContext DiscoveredDevice(
                         ip = ip,
                         port = port,

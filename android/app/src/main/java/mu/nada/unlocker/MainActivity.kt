@@ -145,6 +145,8 @@ fun UnlockScreen(
     var trustedKeysList by remember { mutableStateOf(hostKeyManager.getTrustedKeys()) }
     var mapperTarget by remember { mutableStateOf(hostKeyManager.getMapperTarget()) }
     var pollTimeoutSec by remember { mutableStateOf(hostKeyManager.getPollTimeoutSeconds()) }
+    var targetPortsInput by remember { mutableStateOf(hostKeyManager.getTargetPorts().joinToString(", ")) }
+    var bannerRegexInput by remember { mutableStateOf(hostKeyManager.getBannerRegex()) }
 
     // TOFU Dialog State
     var tofuRequest by remember { mutableStateOf<TofuPromptRequest?>(null) }
@@ -378,7 +380,28 @@ fun UnlockScreen(
                                 }
 
                                 HorizontalDivider(color = Color.DarkGray)
-                                Text("Channel Priorities & Active Channels:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text("Scanning & Filter Filters:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                OutlinedTextField(
+                                    value = targetPortsInput,
+                                    onValueChange = {
+                                        targetPortsInput = it
+                                        val ports = it.split(",").mapNotNull { p -> p.trim().toIntOrNull() }
+                                        if (ports.isNotEmpty()) hostKeyManager.setTargetPorts(ports)
+                                    },
+                                    label = { Text("Target Ports (e.g. 22 or 22, 2222)") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                OutlinedTextField(
+                                    value = bannerRegexInput,
+                                    onValueChange = {
+                                        bannerRegexInput = it
+                                        hostKeyManager.setBannerRegex(it)
+                                    },
+                                    label = { Text("SSH Banner Filter Regex (default: .*dropbear.*)") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
 
                                 LazyColumn(modifier = Modifier.heightIn(max = 200.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                     itemsIndexed(channelPriority) { index, channel ->

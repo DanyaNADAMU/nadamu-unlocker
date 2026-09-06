@@ -24,6 +24,8 @@ class HostKeyManager(private val context: Context) {
         private const val KEY_MAPPER_TARGET = "mapper_target"
         private const val KEY_POLL_TIMEOUT = "poll_timeout_sec"
         private const val KEY_AUTONOMY_MODE = "autonomy_mode"
+        private const val KEY_TARGET_PORTS = "target_ports_csv"
+        private const val KEY_BANNER_REGEX = "banner_regex_filter"
     }
 
     private val prefs: SharedPreferences by lazy {
@@ -192,6 +194,31 @@ class HostKeyManager(private val context: Context) {
     fun setAutonomyMode(mode: mu.nada.unlocker.data.AutonomyMode) {
         prefs.edit().putString(KEY_AUTONOMY_MODE, mode.name).apply()
         AppLogger.i(TAG, "Autonomy mode set to: ${mode.name}")
+    }
+
+    // --- Target Ports & Banner Regex Filters ---
+
+    fun getTargetPorts(): List<Int> {
+        val saved = prefs.getString(KEY_TARGET_PORTS, "22")
+        if (saved.isNullOrBlank()) return listOf(22)
+        val ports = saved.split(",").mapNotNull { it.trim().toIntOrNull() }
+        return if (ports.isNotEmpty()) ports else listOf(22)
+    }
+
+    fun setTargetPorts(ports: List<Int>) {
+        val str = ports.filter { it in 1..65535 }.joinToString(",")
+        prefs.edit().putString(KEY_TARGET_PORTS, if (str.isNotBlank()) str else "22").apply()
+        AppLogger.d(TAG, "Target ports set to: $str")
+    }
+
+    fun getBannerRegex(): String {
+        return prefs.getString(KEY_BANNER_REGEX, ".*dropbear.*") ?: ".*dropbear.*"
+    }
+
+    fun setBannerRegex(regex: String) {
+        val trimmed = regex.trim()
+        prefs.edit().putString(KEY_BANNER_REGEX, if (trimmed.isNotBlank()) trimmed else ".*dropbear.*").apply()
+        AppLogger.d(TAG, "SSH banner regex set to: $trimmed")
     }
 
     // --- Mapper & Timeout Settings ---
