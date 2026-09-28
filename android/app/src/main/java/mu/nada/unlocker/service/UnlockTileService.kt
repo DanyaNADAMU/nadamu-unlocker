@@ -51,7 +51,7 @@ class UnlockTileService : TileService() {
 
         val password = keyManager.getSavedPassword()
         if (password.isNullOrEmpty()) {
-            Toast.makeText(this, "Please save LUKS password in Nadamu Unlocker first", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Please save LUKS password in Unlocker first", Toast.LENGTH_SHORT).show()
             updateTileState(Tile.STATE_INACTIVE, "No password")
             return
         }

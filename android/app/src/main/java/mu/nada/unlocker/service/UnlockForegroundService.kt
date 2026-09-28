@@ -170,7 +170,7 @@ class UnlockForegroundService : Service() {
 
             val notification = NotificationCompat.Builder(this, CHANNEL_SERVICE)
                 .setSmallIcon(R.drawable.app_logo)
-                .setContentTitle("Nadamu Unlocker")
+                .setContentTitle("Unlocker")
                 .setContentText(text)
                 .setContentIntent(openAppIntent)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -457,7 +457,7 @@ class UnlockForegroundService : Service() {
             val notification = NotificationCompat.Builder(this, CHANNEL_ALERTS)
                 .setSmallIcon(R.drawable.app_logo)
                 .setContentTitle("🔑 New Host Key Detected")
-                .setContentText("Open Nadamu Unlocker to verify and trust this laptop key ($targetIp).")
+                .setContentText("Open Unlocker to verify and trust this laptop key ($targetIp).")
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setAutoCancel(true)
                 .setContentIntent(openAppIntent)
@@ -498,7 +498,7 @@ class UnlockForegroundService : Service() {
                 "Background Service Status",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Shows the active background monitoring state of Nadamu Unlocker"
+                description = "Shows the active background monitoring state of Unlocker"
                 setShowBadge(false)
             }
 

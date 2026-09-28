@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Automated end-to-end tester for nadamu-unlocker lab.
+Automated end-to-end tester for unlocker lab.
 Validates the unlock contract against Dropbear and cryptsetup inside initramfs:
 1. Dropbear SSH availability and pubkey authentication
 2. Rejection of unauthorized SSH keys
@@ -29,12 +29,15 @@ def can_resolve(host: str) -> bool:
 
 
 def get_default_host_and_port() -> tuple[str, int]:
-    env_host = os.environ.get("NADAMU_SSH_HOST")
-    env_port = os.environ.get("NADAMU_SSH_PORT")
+    env_host = os.environ.get("UNLOCKER_SSH_HOST") or os.environ.get("NADAMU_SSH_HOST")
+    env_port = os.environ.get("UNLOCKER_SSH_PORT") or os.environ.get("NADAMU_SSH_PORT")
 
     if env_host:
-        port = int(env_port) if env_port else (22 if env_host == "nadamu-unlocker-lab" else 2222)
+        port = int(env_port) if env_port else (22 if env_host in ("unlocker-lab", "nadamu-unlocker-lab") else 2222)
         return env_host, port
+
+    if can_resolve("unlocker-lab"):
+        return "unlocker-lab", int(env_port) if env_port else 22
 
     if can_resolve("nadamu-unlocker-lab"):
         return "nadamu-unlocker-lab", int(env_port) if env_port else 22
@@ -193,7 +196,7 @@ def test_valid_unlock_and_mapper_poll(
 def parse_args():
     default_host, default_port = get_default_host_and_port()
 
-    parser = argparse.ArgumentParser(description="Automated tester for nadamu-unlocker lab.")
+    parser = argparse.ArgumentParser(description="Automated tester for unlocker lab.")
     parser.add_argument("pos_host", nargs="?", help="SSH host (optional positional)")
     parser.add_argument("pos_port", nargs="?", type=int, help="SSH port (optional positional)")
     parser.add_argument("pos_key", nargs="?", help="Key path (optional positional)")

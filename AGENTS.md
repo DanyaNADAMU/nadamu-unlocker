@@ -4,7 +4,7 @@ Instructions for AI agents (and humans) working in this repository.
 
 ## What this project is
 
-**nadamu-unlocker** unlocks a LUKS-encrypted laptop from an Android phone.
+**unlocker** unlocks a LUKS-encrypted laptop from an Android phone.
 The laptop runs a Dropbear SSH server inside its *initramfs*; the phone
 connects over the network and injects the disk passphrase into
 `/lib/cryptsetup/passfifo` via SSH.
@@ -20,7 +20,7 @@ the laptop.
 android/    Android app (Kotlin, Compose, SSHJ). Discovers laptop, sends passphrase.
 laptop/     What gets installed on the target laptop: initramfs hooks + unlock CLI.
 lab/        QEMU-based test lab in Docker: builds a real initramfs and tests unlocking end-to-end.
-docs/       Cross-component contracts, architecture decisions (ADR), release workflows, network mode matrix.
+docs/       Architecture specifications, execution plans, ADRs, and multilingual guides.
 .github/    CI/CD: Android debug APK build, release publishing, doc linter.
 ```
 
@@ -28,6 +28,9 @@ docs/       Cross-component contracts, architecture decisions (ADR), release wor
 
 | Question | Document |
 |---|---|
+| What is the high-level architecture, component breakdown, and security boundaries? | `docs/architecture/overview.md` |
+| What are the current execution milestones and roadmap checklists? | `docs/plans/roadmap.md` |
+| What future features and RFC proposals are in the backlog? | `docs/ideas/future-enhancements.md` |
 | How do the app and initramfs talk? Protocol details | `docs/en/unlock-flow.md` (RU: `docs/ru/unlock-flow.md`) |
 | How are branches, PRs, and releases managed? | `docs/en/branching-and-releases.md` (RU: `docs/ru/branching-and-releases.md`) |
 | Which network topologies are supported / planned? | `docs/en/network-modes.md` (RU: `docs/ru/network-modes.md`) |
@@ -69,11 +72,11 @@ Update documentation **in the same change** as the code:
    `docs/en/network-modes.md` and `docs/ru/network-modes.md` matrix rows.
 3. Changed laptop setup or initramfs hooks → update
    `docs/en/laptop-setup.md` and `docs/ru/laptop-setup.md`.
-3. Made an architectural choice where alternatives were rejected → add
+4. Made an architectural choice where alternatives were rejected → add
    `docs/adr/NNNN-short-name.md`. ADRs are immutable; supersede, don't edit.
-4. Changed build/run/test steps of a component → update that component's
+5. Changed build/run/test steps of a component → update that component's
    `README.md`.
-5. If you could not verify a documented claim by running it, mark it
+6. If you could not verify a documented claim by running it, mark it
    `Verified: never` instead of leaving it unmarked.
 
 These rules are **enforced** by `scripts/check_docs.py`

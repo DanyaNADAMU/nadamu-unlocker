@@ -74,7 +74,7 @@ cd android && ./gradlew assembleDebug && cd ..
 ```sh
 git push -u origin feat/my-feature-name
 ```
-Перейдите на GitHub (`https://github.com/DanyaNADAMU/nadamu-unlocker`) и создайте Pull Request в ветку `main`.
+Перейдите на GitHub (`https://github.com/DanyaNADAMU/unlocker`) и создайте Pull Request в ветку `main`.
 
 ---
 
@@ -96,8 +96,8 @@ git push -u origin feat/my-feature-name
 Релизный процесс полностью автоматизирован в воркфлоу `.github/workflows/release.yml`.
 
 ### Что входит в релиз:
-1. Подписанный и оптимизированный релизный APK (`nadamu-unlocker-vX.Y.Z.apk`).
-2. Контрольная сумма SHA-256 (`nadamu-unlocker-vX.Y.Z.apk.sha256`).
+1. Подписанный и оптимизированный релизный APK (`unlocker-vX.Y.Z.apk`).
+2. Контрольная сумма SHA-256 (`unlocker-vX.Y.Z.apk.sha256`).
 3. Автоматически сгенерированный список изменений (Release Notes / Changelog).
 
 ### Способ 1. Автоматический выпуск через Git Tag (Основной)
@@ -117,7 +117,7 @@ git push -u origin feat/my-feature-name
 4. GitHub Actions автоматически запустит воркфлоу `Release APK`, соберет релизный бинарник и создаст релиз в разделе **Releases**.
 
 ### Способ 2. Ручной запуск через Web UI (`workflow_dispatch`)
-1. Перейдите во вкладку **Actions** на GitHub (`https://github.com/DanyaNADAMU/nadamu-unlocker/actions`).
+1. Перейдите во вкладку **Actions** на GitHub (`https://github.com/DanyaNADAMU/unlocker/actions`).
 2. В левой колонке выберите воркфлоу **Release Android APK**.
 3. Нажмите кнопку **Run workflow**.
 4. Введите имя тега (например, `v1.1.0`), при необходимости отметьте галочку *Draft* или *Prerelease*, и нажмите зеленую кнопку **Run workflow**.
@@ -127,10 +127,10 @@ git push -u origin feat/my-feature-name
 ## 5. Как скачать и проверить готовый APK
 
 После завершения релизного воркфлоу:
-1. Откройте страницу релизов: `https://github.com/DanyaNADAMU/nadamu-unlocker/releases`.
-2. В самом верхнем (последнем) релизе в секции **Assets** скачайте файл `nadamu-unlocker-vX.Y.Z.apk` на телефон.
+1. Откройте страницу релизов: `https://github.com/DanyaNADAMU/unlocker/releases`.
+2. В самом верхнем (последнем) релизе в секции **Assets** скачайте файл `unlocker-vX.Y.Z.apk` на телефон.
 3. При необходимости проверьте целостность файла по SHA-256:
    ```sh
-   sha256sum nadamu-unlocker-vX.Y.Z.apk
+   sha256sum unlocker-vX.Y.Z.apk
    ```
    Хеш должен совпадать со значением в прикрепленном файле `.sha256`.

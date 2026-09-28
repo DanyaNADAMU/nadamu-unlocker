@@ -312,7 +312,7 @@ sudo ./install.sh --ssid "MyHotspot" --psk "MyPassword123"
 ```
 
 После выполнения скрипта:
-1. Откройте приложение **Nadamu Unlocker** на телефоне.
+1. Откройте приложение **Unlocker** на телефоне.
 2. Скопируйте **Client SSH Public Key**.
 3. Вставьте его в `/etc/dropbear/initramfs/authorized_keys` на ноутбуке.
 4. Выполните `sudo update-initramfs -u -k all`.

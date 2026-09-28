@@ -1,4 +1,4 @@
-# nadamu-unlocker
+# unlocker
 
 [ English ](README.md) • [ Русский ](README.ru.md) | [ 📖 Documentation ](docs/en/index.md)
 
@@ -18,6 +18,7 @@
 
 The protocol contract between both sides is documented in
 [`docs/en/unlock-flow.md`](docs/en/unlock-flow.md) (Russian: [`docs/ru/unlock-flow.md`](docs/ru/unlock-flow.md)).
+System architecture is detailed in [`docs/architecture/overview.md`](docs/architecture/overview.md).
 
 ## Supported network modes
 
@@ -43,7 +44,7 @@ android/    Phone-side app (Kotlin, Jetpack Compose, SSHJ, BouncyCastle)
 laptop/     Laptop-side installer: initramfs hooks + `unlock` CLI (Kali/Debian/Ubuntu)
 lab/        QEMU test lab in Docker — builds a real initramfs, unlocks a real
             LUKS disk image end-to-end, no hardware needed
-docs/       Full documentation (en/ and ru/), contracts, and ADRs
+docs/       Full documentation (en/ and ru/), architecture, plans, and ADRs
 ```
 
 ## Quick start (lab)
@@ -70,6 +71,9 @@ docker compose up -d      # builds initramfs + LUKS disk, boots QEMU VM
 ## Documentation Index
 
 - 📖 [Documentation Portal (English)](docs/en/index.md) | [Портал документации (Русский)](docs/ru/index.md)
+- 📐 [Architecture Overview](docs/architecture/overview.md)
+- 📋 [Roadmap & Milestone Checklist](docs/plans/roadmap.md)
+- 💡 [Ideas & Future Enhancements](docs/ideas/future-enhancements.md)
 - 💻 [Laptop Target Setup Guide](docs/en/laptop-setup.md) | [Настройка ноутбука (RU)](docs/ru/laptop-setup.md)
 - 🌐 [Network Modes Matrix](docs/en/network-modes.md) | [Матрица сетевых режимов (RU)](docs/ru/network-modes.md)
 - 🔐 [Unlock Flow Contract](docs/en/unlock-flow.md) | [Протокол разблокировки (RU)](docs/ru/unlock-flow.md)

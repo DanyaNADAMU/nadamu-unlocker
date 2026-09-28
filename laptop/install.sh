@@ -1,5 +1,5 @@
 #!/bin/sh
-# nadamu-unlocker installer for laptop (Kali / Debian)
+# unlocker installer for laptop (Kali / Debian)
 # Supports Local Modes: A1 (USB Tethering), A2 (Ethernet LAN), A3/A4 (Wi-Fi Hotspot / LAN)
 set -e
 
@@ -28,7 +28,7 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-echo "=== [nadamu-unlocker] Installing hooks for Kali/Debian (Modes A1/A2/A3) ==="
+echo "=== [unlocker] Installing hooks for Kali/Debian (Modes A1/A2/A3) ==="
 
 # 1. Check and install required packages
 REQUIRED_PKGS="dropbear-initramfs cryptsetup-initramfs busybox wpasupplicant rfkill iw"
@@ -293,5 +293,5 @@ echo "[+] Configured Dropbear for public-key authentication only (-s -j -k)."
 echo "[*] Updating initramfs image..."
 update-initramfs -u -k all
 
-echo "[+] nadamu-unlocker installation completed successfully!"
+echo "[+] unlocker installation completed successfully!"
 echo "[*] Next step: add your client public key to /etc/dropbear/initramfs/authorized_keys"

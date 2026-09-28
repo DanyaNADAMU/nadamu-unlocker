@@ -108,7 +108,7 @@ jobs:
           fi
 
           echo "Found APK to sign: $RAW_APK"
-          FINAL_APK="nadamu-unlocker-${TAG_NAME}.apk"
+          FINAL_APK="unlocker-${TAG_NAME}.apk"
 
           # Prepare aligned APK
           "$ZIPALIGN" -f -p 4 "$RAW_APK" app-aligned.apk
@@ -155,7 +155,7 @@ jobs:
       - name: Upload Release Artifacts to Workflow
         uses: actions/upload-artifact@v4
         with:
-          name: nadamu-unlocker-${{ steps.version_info.outputs.tag }}
+          name: unlocker-${{ steps.version_info.outputs.tag }}
           path: |
             ${{ steps.sign_apk.outputs.final_apk }}
             ${{ steps.sign_apk.outputs.final_sha256 }}

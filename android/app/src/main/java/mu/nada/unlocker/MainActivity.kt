@@ -65,7 +65,7 @@ class MainActivity : FragmentActivity() {
         keyManager = KeyManager(this)
         hostKeyManager = HostKeyManager(this)
 
-        AppLogger.i("MainActivity", "Nadamu Unlocker initialized. Ready.")
+        AppLogger.i("MainActivity", "Unlocker initialized. Ready.")
 
         // Start background service if Semi-Auto or Auto mode is active
         val mode = hostKeyManager.getAutonomyMode()
@@ -93,7 +93,7 @@ class MainActivity : FragmentActivity() {
                         if (hostKeyManager.isAppLockEnabled() && !isAppUnlocked) {
                             BiometricHelper.authenticate(
                                 activity = this@MainActivity,
-                                title = "Nadamu Unlocker Locked",
+                                title = "Unlocker Locked",
                                 subtitle = "Authenticate with fingerprint to open app",
                                 onSuccess = { isAppUnlocked = true },
                                 onError = { msg ->
@@ -108,7 +108,7 @@ class MainActivity : FragmentActivity() {
                             onAuthenticate = {
                                 BiometricHelper.authenticate(
                                     activity = this@MainActivity,
-                                    title = "Nadamu Unlocker Locked",
+                                    title = "Unlocker Locked",
                                     subtitle = "Authenticate with fingerprint to open app",
                                     onSuccess = { isAppUnlocked = true },
                                     onError = { msg ->
@@ -155,7 +155,7 @@ fun AppLockedScreen(onAuthenticate: () -> Unit) {
         Text("App is Locked", fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            "Biometric authentication is required to access Nadamu Unlocker.",
+            "Biometric authentication is required to access Unlocker.",
             fontSize = 13.sp,
             color = Color.Gray,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center

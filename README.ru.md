@@ -1,4 +1,4 @@
-# nadamu-unlocker
+# unlocker
 
 [ English ](README.md) • [ Русский ](README.ru.md) | [ 📖 Документация ](docs/ru/index.md)
 
@@ -18,6 +18,7 @@
 ```
 
 Подробная спецификация протокола взаимодействия описана в [`docs/ru/unlock-flow.md`](docs/ru/unlock-flow.md).
+Архитектура системы детально представлена в [`docs/architecture/overview.md`](docs/architecture/overview.md).
 
 ---
 
@@ -44,7 +45,7 @@ Verified: 2026-08-28 — сценарии A1, A2 и A3 верифицирова�
 android/    Клиентское Android-приложение (Kotlin, Jetpack Compose, SSHJ, BouncyCastle)
 laptop/     Скрипты установки для ноутбука: хуки initramfs + CLI unlock (Kali / Debian / Ubuntu)
 lab/        Тестовый стенд QEMU в Docker — собирает реальный initramfs и разблокирует тестовый LUKS-образ
-docs/       Документация проекта (EN / RU), контракты и архитектурные решения (ADR)
+docs/       Документация проекта (EN / RU), архитектура, роадмап и решения (ADR)
 ```
 
 ---
@@ -73,6 +74,9 @@ docker compose up -d      # собирает initramfs + LUKS диск, запу
 ## Карта документации
 
 - 📖 [Начало работы и руководство по документации](docs/ru/index.md)
+- 📐 [Архитектурный обзор и диаграммы](docs/architecture/overview.md)
+- 📋 [План разработки и чек-лист дорожной карты](docs/plans/roadmap.md)
+- 💡 [Идеи и предложения для будущих версий (RFC)](docs/ideas/future-enhancements.md)
 - 💻 [Полная настройка ноутбука (Kali / Debian / Ubuntu)](docs/ru/laptop-setup.md)
 - 🌐 [Матрица сетевых режимов (A1–A4, B1–B2)](docs/ru/network-modes.md)
 - 🔐 [Спецификация протокола разблокировки](docs/ru/unlock-flow.md)

@@ -22,7 +22,7 @@ is NOT success.
 |---|---|---|
 | Phone | `SshUnlocker` (SSHJ client) | connect, auth, write fifo, verify |
 | Laptop | dropbear in initramfs | SSH server, pubkey-only |
-| Laptop | `scripts/local-top/nadamu_cryptroot` | read fifo, run `cryptsetup open` |
+| Laptop | cryptsetup in initramfs (`cryptroot`) | read fifo, run `cryptsetup open` |
 | Laptop | `/bin/unlock` helper | same fifo write, for human interactive use |
 
 ## Connection

@@ -2,12 +2,15 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-KEY_PATH="${NADAMU_KEY_PATH:-${SCRIPT_DIR}/data/keys/id_ed25519}"
-HOST="${NADAMU_SSH_HOST}"
-PORT="${NADAMU_SSH_PORT}"
+KEY_PATH="${UNLOCKER_KEY_PATH:-${NADAMU_KEY_PATH:-${SCRIPT_DIR}/data/keys/id_ed25519}}"
+HOST="${UNLOCKER_SSH_HOST:-${NADAMU_SSH_HOST}}"
+PORT="${UNLOCKER_SSH_PORT:-${NADAMU_SSH_PORT}}"
 
 if [ -z "$HOST" ]; then
-    if getent hosts nadamu-unlocker-lab >/dev/null 2>&1; then
+    if getent hosts unlocker-lab >/dev/null 2>&1; then
+        HOST="unlocker-lab"
+        PORT="${PORT:-22}"
+    elif getent hosts nadamu-unlocker-lab >/dev/null 2>&1; then
         HOST="nadamu-unlocker-lab"
         PORT="${PORT:-22}"
     else

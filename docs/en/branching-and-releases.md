@@ -75,7 +75,7 @@ Push your feature branch to GitHub:
 ```sh
 git push -u origin feat/my-feature-name
 ```
-Navigate to GitHub (`https://github.com/DanyaNADAMU/nadamu-unlocker`) and create a Pull Request against `main`.
+Navigate to GitHub (`https://github.com/DanyaNADAMU/unlocker`) and create a Pull Request against `main`.
 
 ---
 
@@ -97,8 +97,8 @@ GitHub Actions run automatically on every Pull Request:
 The release lifecycle is fully automated in `.github/workflows/release.yml`.
 
 ### Release Artifacts:
-1. Signed and zipalign-optimized Release APK (`nadamu-unlocker-vX.Y.Z.apk`).
-2. SHA-256 Checksum file (`nadamu-unlocker-vX.Y.Z.apk.sha256`).
+1. Signed and zipalign-optimized Release APK (`unlocker-vX.Y.Z.apk`).
+2. SHA-256 Checksum file (`unlocker-vX.Y.Z.apk.sha256`).
 3. Auto-generated changelog and release notes.
 
 ### Method 1. Automated Release via Git Tag (Primary)
@@ -118,7 +118,7 @@ The release lifecycle is fully automated in `.github/workflows/release.yml`.
 4. GitHub Actions will automatically launch the `Release APK` workflow, build the signed binary, and publish the release.
 
 ### Method 2. Manual Release via Web UI (`workflow_dispatch`)
-1. Go to **Actions** on GitHub (`https://github.com/DanyaNADAMU/nadamu-unlocker/actions`).
+1. Go to **Actions** on GitHub (`https://github.com/DanyaNADAMU/unlocker/actions`).
 2. Select the **Release Android APK** workflow in the left sidebar.
 3. Click **Run workflow**.
 4. Enter the tag name (e.g. `v1.1.0`), optionally select *Draft* or *Prerelease*, and click **Run workflow**.
@@ -128,10 +128,10 @@ The release lifecycle is fully automated in `.github/workflows/release.yml`.
 ## 5. Downloading & Verifying the Release APK
 
 Once the workflow succeeds:
-1. Open the releases page: `https://github.com/DanyaNADAMU/nadamu-unlocker/releases`.
-2. Under **Assets** of the latest release, download `nadamu-unlocker-vX.Y.Z.apk` to your Android device.
+1. Open the releases page: `https://github.com/DanyaNADAMU/unlocker/releases`.
+2. Under **Assets** of the latest release, download `unlocker-vX.Y.Z.apk` to your Android device.
 3. Verify file integrity using SHA-256:
    ```sh
-   sha256sum nadamu-unlocker-vX.Y.Z.apk
+   sha256sum unlocker-vX.Y.Z.apk
    ```
    The checksum must match the value in the companion `.sha256` asset.

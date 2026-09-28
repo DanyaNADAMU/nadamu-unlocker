@@ -17,7 +17,7 @@ Android-приложение подключается по SSH (только п�
 |---|---|---|
 | Телефон | `SshUnlocker` (SSHJ-клиент) | Подключение, авторизация по ключу, запись в passfifo, опрос маппера |
 | Ноутбук | Dropbear в initramfs | SSH-сервер (только pubkey-аутентификация) |
-| Ноутбук | `scripts/local-top/nadamu_cryptroot` | Чтение passfifo, запуск `cryptsetup open` |
+| Ноутбук | cryptsetup в initramfs (`cryptroot`) | Чтение passfifo, запуск `cryptsetup open` |
 | Ноутбук | `/bin/unlock` CLI | Помощник для ручной разблокировки в сессии SSH |
 
 ## Параметры подключения

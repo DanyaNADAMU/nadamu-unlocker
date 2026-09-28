@@ -20,7 +20,7 @@ one implementation (ADR 0001); B1/B2 run concurrently (ADR 0002).
 | A3 | Laptop joins phone's Wi-Fi hotspot | wpa_supplicant hook + rfkill + firmware + udhcpc on wlan0 | connect to hotspot, then same scan | Wi-Fi PSK (scoped: join-network only) | **[implemented]**, lab-tested |
 | A4 | Both on same Wi-Fi LAN | same as A3 but SSID = home router | same scan on home subnet | Wi-Fi PSK | [planned] — same code as A3 |
 
-Verified: 2026-08-28 — A1, A2, and A3 verified end-to-end in the QEMU lab
+Verified: 2026-09-28 — A1, A2, and A3 verified end-to-end in the QEMU lab
 (`lab/test_unlock.py`: virtio-net Ethernet / user-net DHCP on eth0, multi-interface scanner, Wi-Fi wpa_supplicant hooks, SSH probe → auth rejection → invalid passphrase rejection → fifo write → mapper poll verification → poweroff).
 
 Notes:

@@ -1,10 +1,10 @@
 services:
-  nadamu-unlocker-lab:
+  unlocker-lab:
     build:
       context: .
       dockerfile: Containerfile
-    image: localhost/nadamu-unlocker-lab:latest
-    container_name: nadamu-unlocker-lab
+    image: localhost/unlocker-lab:latest
+    container_name: unlocker-lab
     restart: no
     devices:
       - /dev/kvm:/dev/kvm

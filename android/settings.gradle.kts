@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "nadamu-unlocker"
+rootProject.name = "unlocker"
 include(":app")
