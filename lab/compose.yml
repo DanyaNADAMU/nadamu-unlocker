@@ -16,6 +16,7 @@ services:
     volumes:
       - ./data:/lab/data
       - .:/lab/scripts:ro
+      - ../laptop:/lab/laptop:ro
     # Compose v2 style limits (better supported than deploy.resources)
     mem_limit: 1024m
     cpus: 1.0

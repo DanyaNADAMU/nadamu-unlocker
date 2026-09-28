@@ -10,7 +10,7 @@ RUN_SCRIPT="/lab/run_qemu.sh"
 [ -f "${SCRIPTS_DIR}/build_lab.sh" ] && BUILD_SCRIPT="${SCRIPTS_DIR}/build_lab.sh"
 [ -f "${SCRIPTS_DIR}/run_qemu.sh" ] && RUN_SCRIPT="${SCRIPTS_DIR}/run_qemu.sh"
 
-echo "=== [NADAMU LAB INITIALIZATION] ==="
+echo "=== [UNLOCKER LAB INITIALIZATION] ==="
 
 # Build disk and initrd if not existing (cmd.rekey also forces a rebuild so
 # the new pubkey gets baked into the initramfs)

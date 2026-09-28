@@ -2,25 +2,31 @@ FROM docker.io/kalilinux/kali-rolling:latest
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get -o Acquire::Retries=5 install -y --fix-missing --no-install-recommends \
-    qemu-system-x86 \
-    qemu-utils \
-    cryptsetup-bin \
-    cryptsetup-initramfs \
-    cryptsetup \
-    dropbear-initramfs \
-    dropbear-bin \
-    busybox \
-    linux-image-amd64 \
-    initramfs-tools \
-    e2fsprogs \
-    openssh-client \
-    cpio \
-    curl \
-    ca-certificates \
-    iproute2 \
-    isc-dhcp-client \
-    procps \
+# Point directly to the official Cloudflare CDN mirror (kali.download) to avoid
+# slow/throttled third-party mirrors (e.g. mirror.nl.cdn-perfprod.com) and disable translations.
+RUN echo 'Acquire::Languages "none";' > /etc/apt/apt.conf.d/99translations \
+    && echo 'Acquire::http::Pipeline-Depth "0";' >> /etc/apt/apt.conf.d/99translations \
+    && echo "deb http://kali.download/kali kali-rolling main contrib non-free non-free-firmware" > /etc/apt/sources.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+       qemu-system-x86 \
+       qemu-utils \
+       cryptsetup-bin \
+       cryptsetup-initramfs \
+       cryptsetup \
+       dropbear-initramfs \
+       dropbear-bin \
+       busybox \
+       linux-image-amd64 \
+       initramfs-tools \
+       e2fsprogs \
+       openssh-client \
+       cpio \
+       curl \
+       ca-certificates \
+       iproute2 \
+       isc-dhcp-client \
+       procps \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /lab

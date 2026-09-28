@@ -7,7 +7,7 @@ LUKS_PASSWORD="${LUKS_PASSWORD:-password}"
 
 mkdir -p "${DATA_DIR}" "${KEYS_DIR}"
 
-echo "=== [NADAMU LAB INITIALIZATION (KALI STANDARD UPDATE-INITRAMFS)] ==="
+echo "=== [UNLOCKER LAB INITIALIZATION (KALI STANDARD UPDATE-INITRAMFS)] ==="
 
 # 1. Generate Ed25519 key (only if missing; survives rebuilds so baked-in
 #    authorized_keys and external SSH clients stay valid. Force rotation
@@ -23,7 +23,7 @@ if [ -f "${KEYS_DIR}/id_ed25519" ] && [ -f "${KEYS_DIR}/id_ed25519.pub" ]; then
 else
     echo "[*] 1. Generating fresh test SSH key (Ed25519)..."
     # Force empty passphrase with -N "" and quiet mode
-    ssh-keygen -q -t ed25519 -N "" -f "${KEYS_DIR}/id_ed25519" -C "nadamu-test-ed25519"
+    ssh-keygen -q -t ed25519 -N "" -f "${KEYS_DIR}/id_ed25519" -C "unlocker-test-ed25519"
 fi
 
 # Explicitly set permissions on the host side so SSH client doesn't complain.
@@ -197,7 +197,7 @@ mkdir -p /lib/cryptsetup
 [ -p /lib/cryptsetup/passfifo ] || mkfifo /lib/cryptsetup/passfifo
 
 echo "=========================================="
-echo "    NADAMU LUKS UNREADY"
+echo "    UNLOCKER LUKS UNREADY"
 echo "=========================================="
 echo "[*] Debug: Checking Dropbear authorized_keys in initramfs:"
 ls -ld /root || echo "No /root"
