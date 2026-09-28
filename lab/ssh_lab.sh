@@ -10,15 +10,23 @@ if [ -z "$HOST" ]; then
     if getent hosts unlocker-lab >/dev/null 2>&1; then
         HOST="unlocker-lab"
         PORT="${PORT:-22}"
-    elif getent hosts nadamu-unlocker-lab >/dev/null 2>&1; then
-        HOST="nadamu-unlocker-lab"
-        PORT="${PORT:-22}"
-    else
+    elif python3 -c "import socket; s = socket.socket(); s.settimeout(0.3); s.connect(('127.0.0.1', 2222)); s.close()" 2>/dev/null; then
         HOST="127.0.0.1"
         PORT="${PORT:-2222}"
+    else
+        # Check default gateway (e.g. agent container communicating with host port forward)
+        GW=$(awk '$2 == "00000000" { printf "%d.%d.%d.%d\n", "0x" substr($3, 7, 2), "0x" substr($3, 5, 2), "0x" substr($3, 3, 2), "0x" substr($3, 1, 2) }' /proc/net/route 2>/dev/null | head -n 1)
+        if [ -n "$GW" ] && python3 -c "import socket; s = socket.socket(); s.settimeout(0.3); s.connect(('$GW', 2222)); s.close()" 2>/dev/null; then
+            HOST="$GW"
+            PORT="${PORT:-2222}"
+        else
+            HOST="127.0.0.1"
+            PORT="${PORT:-2222}"
+        fi
     fi
+else
+    PORT="${PORT:-2222}"
 fi
-PORT="${PORT:-2222}"
 
 if [ ! -f "$KEY_PATH" ]; then
     echo "[-] Error: SSH key not found at $KEY_PATH"

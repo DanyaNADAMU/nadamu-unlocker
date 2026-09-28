@@ -16,6 +16,8 @@ import sys
 import tempfile
 import time
 
+import struct
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_KEY_PATH = os.path.join(SCRIPT_DIR, "data", "keys", "id_ed25519")
 
@@ -28,6 +30,30 @@ def can_resolve(host: str) -> bool:
         return False
 
 
+def can_connect(host: str, port: int, timeout: float = 0.5) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def get_default_gateways() -> list[str]:
+    gateways = []
+    try:
+        with open("/proc/net/route", "r") as f:
+            for line in f.readlines()[1:]:
+                parts = line.strip().split()
+                if len(parts) >= 3 and parts[1] == "00000000":
+                    gw_hex = parts[2]
+                    gw_ip = socket.inet_ntoa(struct.pack("<L", int(gw_hex, 16)))
+                    if gw_ip != "0.0.0.0" and gw_ip not in gateways:
+                        gateways.append(gw_ip)
+    except Exception:
+        pass
+    return gateways
+
+
 def get_default_host_and_port() -> tuple[str, int]:
     env_host = os.environ.get("UNLOCKER_SSH_HOST") or os.environ.get("NADAMU_SSH_HOST")
     env_port = os.environ.get("UNLOCKER_SSH_PORT") or os.environ.get("NADAMU_SSH_PORT")
@@ -36,13 +62,26 @@ def get_default_host_and_port() -> tuple[str, int]:
         port = int(env_port) if env_port else (22 if env_host in ("unlocker-lab", "nadamu-unlocker-lab") else 2222)
         return env_host, port
 
+    # 1. Direct container name (Docker/Podman network with DNS)
+    for name in ("unlocker-lab", "nadamu-unlocker-lab"):
+        if can_connect(name, 22):
+            return name, 22
+
+    # 2. Localhost standard port forward (host machine execution)
+    if can_connect("127.0.0.1", 2222):
+        return "127.0.0.1", 2222
+
+    # 3. Default gateways from /proc/net/route (container accessing host port forward)
+    for gw in get_default_gateways():
+        if can_connect(gw, 2222):
+            return gw, 2222
+        if can_connect(gw, 22):
+            return gw, 22
+
     if can_resolve("unlocker-lab"):
-        return "unlocker-lab", int(env_port) if env_port else 22
+        return "unlocker-lab", 22
 
-    if can_resolve("nadamu-unlocker-lab"):
-        return "nadamu-unlocker-lab", int(env_port) if env_port else 22
-
-    return "127.0.0.1", int(env_port) if env_port else 2222
+    return "127.0.0.1", 2222
 
 
 def build_ssh_base_cmd(key_path: str, host: str, port: int, connect_timeout: int = 5) -> list[str]:
@@ -217,10 +256,10 @@ def main():
 
     host = args.host or args.pos_host or default_host
     port = args.port or args.pos_port or default_port
-    key_path = args.key or args.pos_key or os.environ.get("NADAMU_KEY_PATH") or DEFAULT_KEY_PATH
-    passphrase = args.passphrase or args.pos_pass or os.environ.get("NADAMU_LUKS_PASSWORD") or "password"
+    key_path = args.key or args.pos_key or os.environ.get("UNLOCKER_KEY_PATH") or os.environ.get("NADAMU_KEY_PATH") or DEFAULT_KEY_PATH
+    passphrase = args.passphrase or args.pos_pass or os.environ.get("UNLOCKER_LUKS_PASSWORD") or os.environ.get("NADAMU_LUKS_PASSWORD") or "password"
 
-    print(f"=== [NADAMU LAB TEST SUITE] ===")
+    print(f"=== [UNLOCKER LAB TEST SUITE] ===")
     print(f"Target: {host}:{port}")
     print(f"Key:    {key_path}")
 

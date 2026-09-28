@@ -44,7 +44,7 @@ if [ ! -f "${DATA_DIR}/test_disk.img" ]; then
     truncate -s 500M "${DATA_DIR}/test_disk.img"
 
     echo "[*] 3. Formatting disk with LUKS2 (cryptsetup)..."
-    printf "%s" "${LUKS_PASSWORD}" | cryptsetup luksFormat --type luks2 --pbkdf pbkdf2 --batch-mode "${DATA_DIR}/test_disk.img" -
+    printf "%s" "${LUKS_PASSWORD}" | cryptsetup luksFormat --type luks2 --pbkdf pbkdf2 --pbkdf-force-iterations 1000 --batch-mode "${DATA_DIR}/test_disk.img" -
 fi
 
 # 3. Detect installed kernel version
@@ -214,7 +214,7 @@ while true; do
             printf "%s" "$PASS" | cryptsetup open --type luks /dev/vda test_crypt -
             if [ -b /dev/mapper/test_crypt ]; then
                 echo "[+] LUKS device test_crypt opened successfully!"
-                sleep 2
+                sleep 4
                 echo "[+] Test finished successfully. Shutting down VM..."
                 poweroff -f || reboot -f
                 exit 0
