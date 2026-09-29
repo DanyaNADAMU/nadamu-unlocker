@@ -98,4 +98,20 @@ class NetworkScannerTest {
         assertEquals(NetworkChannel.LAN, NetworkScanner.classifyInterface("wlan0"))
         assertEquals(NetworkChannel.LAN, NetworkScanner.classifyInterface("eth0"))
     }
+
+    @Test
+    fun testDiscoveredDevice_hasLabelAndChannel() {
+        val dev = DiscoveredDevice(
+            ip = "192.168.42.2",
+            port = 22,
+            banner = "SSH-2.0-dropbear",
+            interfaceName = "rndis0",
+            channel = NetworkChannel.USB,
+            fingerprint = "SHA256:abc",
+            label = "Work Laptop"
+        )
+        assertEquals("Work Laptop", dev.label)
+        assertEquals(NetworkChannel.USB, dev.channel)
+        assertEquals("192.168.42.2", dev.ip)
+    }
 }

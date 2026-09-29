@@ -218,4 +218,12 @@ class KeyManager(private val context: Context) {
     fun getSavedPassword(): String? {
         return prefs.getString(KEY_SAVED_PASS, null)
     }
+
+    fun hasSavedPassword(): Boolean {
+        return !getSavedPassword().isNullOrEmpty()
+    }
+
+    fun clearPassword() {
+        prefs.edit().remove(KEY_SAVED_PASS).apply()
+    }
 }

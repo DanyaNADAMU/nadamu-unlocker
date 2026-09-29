@@ -19,7 +19,6 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
 import mu.nada.unlocker.MainActivity
 import mu.nada.unlocker.R
-import mu.nada.unlocker.data.AutonomyMode
 import mu.nada.unlocker.data.DiscoveredDevice
 import mu.nada.unlocker.data.KeyManager
 import mu.nada.unlocker.data.NetworkChannel
@@ -46,9 +45,32 @@ class UnlockForegroundService : Service() {
         const val ACTION_STOP = "mu.nada.unlocker.action.STOP_SERVICE"
         const val ACTION_TRIGGER_UNLOCK = "mu.nada.unlocker.action.TRIGGER_UNLOCK"
         const val ACTION_DISMISS_PROMPT = "mu.nada.unlocker.action.DISMISS_PROMPT"
+        const val ACTION_CONFIRM_BIOMETRIC_UNLOCK = "mu.nada.unlocker.action.CONFIRM_BIOMETRIC_UNLOCK"
 
         const val EXTRA_TARGET_IP = "extra_target_ip"
         const val EXTRA_TARGET_PORT = "extra_target_port"
+        const val EXTRA_TARGET_CHANNEL = "extra_target_channel"
+        const val EXTRA_TARGET_LABEL = "extra_target_label"
+
+        @Volatile
+        var isUserJobRunning: Boolean = false
+
+        private var activeBackgroundJob: Job? = null
+        private val pendingChannels = mutableSetOf<NetworkChannel>()
+        private val queueLock = Any()
+
+        fun cancelActiveBackgroundJob(reason: String) {
+            synchronized(queueLock) {
+                activeBackgroundJob?.let {
+                    if (it.isActive) {
+                        it.cancel()
+                        AppLogger.d("UnlockService", "Cancelled active background scan: $reason")
+                    }
+                }
+                activeBackgroundJob = null
+                pendingChannels.clear()
+            }
+        }
 
         fun start(context: Context) {
             try {
@@ -100,7 +122,7 @@ class UnlockForegroundService : Service() {
             registerEventReceivers()
             registerNetworkCallbacks()
 
-            AppLogger.i(TAG, "UnlockForegroundService created. Mode: ${hostKeyManager.getAutonomyMode().displayName}")
+            AppLogger.i(TAG, "UnlockForegroundService created. Triggers: USB=${hostKeyManager.isTriggerUsbEnabled()}, Hotspot=${hostKeyManager.isTriggerHotspotEnabled()}, WiFi=${hostKeyManager.isTriggerWifiEnabled()}, Screen=${hostKeyManager.isTriggerScreenUnlockEnabled()}")
         } catch (e: Exception) {
             AppLogger.e(TAG, "Error in UnlockForegroundService.onCreate", e)
         }
@@ -123,13 +145,15 @@ class UnlockForegroundService : Service() {
                 ACTION_TRIGGER_UNLOCK -> {
                     val ip = intent.getStringExtra(EXTRA_TARGET_IP)
                     val port = intent.getIntExtra(EXTRA_TARGET_PORT, 22)
-                    AppLogger.i(TAG, "Manual trigger unlock requested from notification/tile: $ip:$port")
+                    val chName = intent.getStringExtra(EXTRA_TARGET_CHANNEL)
+                    val channel = chName?.let { runCatching { NetworkChannel.valueOf(it) }.getOrNull() } ?: NetworkChannel.LAN
+
+                    AppLogger.i(TAG, "Confirmation received: unlocking $ip:$port (${channel.name})")
                     cancelNotification(NOTIFICATION_ID_PROMPT)
-                    serviceScope.launch {
-                        if (ip != null) {
-                            performUnlock(ip, port)
-                        } else {
-                            handleNetworkEvent("Manual Trigger", force = true)
+
+                    if (ip != null) {
+                        serviceScope.launch {
+                            performUnlock(ip, port, channel)
                         }
                     }
                 }
@@ -137,9 +161,8 @@ class UnlockForegroundService : Service() {
                     cancelNotification(NOTIFICATION_ID_PROMPT)
                 }
                 else -> {
-                    val mode = hostKeyManager.getAutonomyMode()
-                    if (mode == AutonomyMode.MANUAL) {
-                        AppLogger.d(TAG, "Service started but mode is MANUAL; stopping service.")
+                    if (!hostKeyManager.isAnyTriggerEnabled()) {
+                        AppLogger.d(TAG, "Service started but no triggers are enabled; stopping service.")
                         stopSelf()
                         return START_NOT_STICKY
                     }
@@ -154,11 +177,16 @@ class UnlockForegroundService : Service() {
 
     private fun startForegroundWithNotification() {
         try {
-            val mode = hostKeyManager.getAutonomyMode()
-            val text = when (mode) {
-                AutonomyMode.AUTO -> "Auto-Unlock active • Monitoring USB, Hotspot & Wi-Fi"
-                AutonomyMode.SEMI_AUTO -> "Semi-Auto active • Ready to prompt on network events"
-                AutonomyMode.MANUAL -> "Ready on demand"
+            val activeTriggers = mutableListOf<String>()
+            if (hostKeyManager.isTriggerUsbEnabled()) activeTriggers.add("USB")
+            if (hostKeyManager.isTriggerHotspotEnabled()) activeTriggers.add("Hotspot")
+            if (hostKeyManager.isTriggerWifiEnabled()) activeTriggers.add("Wi-Fi")
+            if (hostKeyManager.isTriggerScreenUnlockEnabled()) activeTriggers.add("Screen")
+
+            val text = if (activeTriggers.isNotEmpty()) {
+                "Monitoring active: ${activeTriggers.joinToString(", ")}"
+            } else {
+                "Ready on demand"
             }
 
             val openAppIntent = PendingIntent.getActivity(
@@ -197,34 +225,31 @@ class UnlockForegroundService : Service() {
                 addAction(Intent.ACTION_USER_PRESENT)
                 addAction("android.hardware.usb.action.USB_STATE")
                 addAction("android.net.wifi.WIFI_AP_STATE_CHANGED")
-                addAction("android.net.wifi.STATE_CHANGE")
             }
 
             eventReceiver = object : BroadcastReceiver() {
                 override fun onReceive(context: Context?, intent: Intent?) {
                     val action = intent?.action ?: return
-                    val eventName = when (action) {
-                        Intent.ACTION_USER_PRESENT -> "Screen Unlocked"
+                    when (action) {
+                        Intent.ACTION_USER_PRESENT -> {
+                            if (hostKeyManager.isTriggerScreenUnlockEnabled()) {
+                                enqueueBackgroundScan(
+                                    setOf(NetworkChannel.USB, NetworkChannel.HOTSPOT, NetworkChannel.LAN),
+                                    "Screen Unlocked"
+                                )
+                            }
+                        }
                         "android.hardware.usb.action.USB_STATE" -> {
                             val connected = intent.getBooleanExtra("connected", false)
-                            if (!connected) return
-                            "USB Connected"
+                            if (connected && hostKeyManager.isTriggerUsbEnabled() && hostKeyManager.isChannelEnabled(NetworkChannel.USB)) {
+                                enqueueBackgroundScan(setOf(NetworkChannel.USB), "USB Connected")
+                            }
                         }
-                        "android.net.wifi.WIFI_AP_STATE_CHANGED" -> "Hotspot State Changed"
-                        else -> action
-                    }
-
-                    // Check channel enablements before triggering
-                    if (action == "android.hardware.usb.action.USB_STATE" && !hostKeyManager.isChannelEnabled(NetworkChannel.USB)) {
-                        return
-                    }
-                    if (action == "android.net.wifi.WIFI_AP_STATE_CHANGED" && !hostKeyManager.isChannelEnabled(NetworkChannel.HOTSPOT)) {
-                        return
-                    }
-
-                    AppLogger.d(TAG, "Received system event: $eventName")
-                    serviceScope.launch {
-                        handleNetworkEvent(eventName)
+                        "android.net.wifi.WIFI_AP_STATE_CHANGED" -> {
+                            if (hostKeyManager.isTriggerHotspotEnabled() && hostKeyManager.isChannelEnabled(NetworkChannel.HOTSPOT)) {
+                                enqueueBackgroundScan(setOf(NetworkChannel.HOTSPOT), "Hotspot State Changed")
+                            }
+                        }
                     }
                 }
             }
@@ -253,9 +278,8 @@ class UnlockForegroundService : Service() {
 
             networkCallback = object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
-                    AppLogger.d(TAG, "Network became available")
-                    serviceScope.launch {
-                        handleNetworkEvent("Network Connected")
+                    if (hostKeyManager.isTriggerWifiEnabled() && hostKeyManager.isChannelEnabled(NetworkChannel.LAN)) {
+                        enqueueBackgroundScan(setOf(NetworkChannel.LAN), "Network Connected")
                     }
                 }
             }
@@ -266,42 +290,71 @@ class UnlockForegroundService : Service() {
         }
     }
 
-    /**
-     * Core handler triggered by screen unlock, USB, Hotspot, or Wi-Fi events.
-     */
-    private suspend fun handleNetworkEvent(triggerReason: String, force: Boolean = false) {
-        val mode = hostKeyManager.getAutonomyMode()
-        if (mode == AutonomyMode.MANUAL && !force) return
+    private fun enqueueBackgroundScan(channels: Set<NetworkChannel>, reason: String) {
+        if (isUserJobRunning) {
+            AppLogger.d(TAG, "User manual action is in progress; ignoring background trigger ($reason)")
+            return
+        }
 
+        synchronized(queueLock) {
+            if (activeBackgroundJob?.isActive == true) {
+                pendingChannels.addAll(channels)
+                AppLogger.d(TAG, "Background scan in progress; merged channels into pending: $pendingChannels (trigger: $reason)")
+                return
+            }
+
+            launchBackgroundScanJob(channels, reason)
+        }
+    }
+
+    private fun launchBackgroundScanJob(channels: Set<NetworkChannel>, reason: String) {
+        activeBackgroundJob = serviceScope.launch {
+            try {
+                handleNetworkScan(channels, reason)
+            } finally {
+                synchronized(queueLock) {
+                    activeBackgroundJob = null
+                    if (pendingChannels.isNotEmpty() && !isUserJobRunning) {
+                        val nextChannels = pendingChannels.toSet()
+                        pendingChannels.clear()
+                        launchBackgroundScanJob(nextChannels, "Pending queue drain")
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun handleNetworkScan(channels: Set<NetworkChannel>, triggerReason: String) {
         val now = System.currentTimeMillis()
-        if (!force && (now - lastTriggerTime.get()) < 4000) {
-            AppLogger.d(TAG, "Debounced trigger: $triggerReason (too frequent)")
+        if ((now - lastTriggerTime.get()) < 3000) {
+            AppLogger.d(TAG, "Debounced background trigger: $triggerReason (too frequent)")
             return
         }
         lastTriggerTime.set(now)
 
-        val savedPass = keyManager.getSavedPassword()
-        if (savedPass.isNullOrEmpty()) {
-            AppLogger.w(TAG, "Cannot auto-unlock: No password saved in app")
+        if (!keyManager.hasSavedPassword()) {
+            AppLogger.w(TAG, "Cannot auto-unlock: No LUKS password saved in app")
             return
         }
 
-        AppLogger.i(TAG, "Processing trigger: $triggerReason (Mode: ${mode.name}). Fast discovering target...")
-
-        val target = scanner.fastDiscovery(hostKeyManager = hostKeyManager) ?: return
-        AppLogger.i(TAG, "Found target: ${target.ip}:${target.port} (${target.interfaceName})")
-
-        when (mode) {
-            AutonomyMode.AUTO -> {
-                performUnlock(target.ip, target.port, target.channel)
-            }
-            AutonomyMode.SEMI_AUTO -> {
-                showSemiAutoPromptNotification(target)
-            }
-            AutonomyMode.MANUAL -> {
-                if (force) performUnlock(target.ip, target.port, target.channel)
-            }
+        if (!hostKeyManager.hasAnyTrustedKeys()) {
+            AppLogger.d(TAG, "No trusted keys configured; skipping background discovery ($triggerReason)")
+            return
         }
+
+        AppLogger.i(TAG, "Processing trigger: $triggerReason. Scanning channels: ${channels.joinToString { it.name }}...")
+
+        val discovered = scanner.scanSubnetForLuks(
+            targetChannels = channels,
+            timeoutMs = 300,
+            hostKeyManager = hostKeyManager
+        )
+
+        val target = discovered.firstOrNull() ?: return
+        AppLogger.i(TAG, "Found trusted laptop: ${target.label} (${target.ip}:${target.port} on ${target.interfaceName})")
+
+        // Mandatory confirmation: NEVER silently unlock without user confirmation!
+        showConfirmationPromptNotification(target)
     }
 
     private suspend fun performUnlock(
@@ -312,7 +365,7 @@ class UnlockForegroundService : Service() {
         val password = keyManager.getSavedPassword() ?: return
         val privKeyPem = keyManager.getPrivateKeyPem()
 
-        AppLogger.i(TAG, "Auto-unlocking $targetIp:$targetPort (${channel.displayName})...")
+        AppLogger.i(TAG, "Unlocking $targetIp:$targetPort (${channel.displayName})...")
 
         val result = unlocker.unlock(
             host = targetIp,
@@ -327,7 +380,6 @@ class UnlockForegroundService : Service() {
                     showMitMAlertNotification(targetIp, fp)
                     TofuDecision.REJECT
                 } else {
-                    // In background auto mode, we do NOT automatically pin unknown keys without user approval
                     showUntrustedHostNotification(targetIp, fp)
                     TofuDecision.REJECT
                 }
@@ -341,24 +393,43 @@ class UnlockForegroundService : Service() {
                 showSuccessNotification(targetIp, result.message)
             }
             is UnlockResult.Failure -> {
-                AppLogger.w(TAG, "Background unlock failed: ${result.error}")
+                AppLogger.w(TAG, "Unlock failed: ${result.error}")
             }
         }
     }
 
-    private fun showSemiAutoPromptNotification(target: DiscoveredDevice) {
+    private fun showConfirmationPromptNotification(target: DiscoveredDevice) {
         try {
-            val unlockIntent = Intent(this, UnlockForegroundService::class.java).apply {
-                action = ACTION_TRIGGER_UNLOCK
-                putExtra(EXTRA_TARGET_IP, target.ip)
-                putExtra(EXTRA_TARGET_PORT, target.port)
+            val unlockPendingIntent: PendingIntent = if (hostKeyManager.isBiometricUnlockRequired()) {
+                val biometricIntent = Intent(this, MainActivity::class.java).apply {
+                    action = ACTION_CONFIRM_BIOMETRIC_UNLOCK
+                    putExtra(EXTRA_TARGET_IP, target.ip)
+                    putExtra(EXTRA_TARGET_PORT, target.port)
+                    putExtra(EXTRA_TARGET_CHANNEL, target.channel.name)
+                    putExtra(EXTRA_TARGET_LABEL, target.label)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                }
+                PendingIntent.getActivity(
+                    this,
+                    1,
+                    biometricIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+            } else {
+                val serviceIntent = Intent(this, UnlockForegroundService::class.java).apply {
+                    action = ACTION_TRIGGER_UNLOCK
+                    putExtra(EXTRA_TARGET_IP, target.ip)
+                    putExtra(EXTRA_TARGET_PORT, target.port)
+                    putExtra(EXTRA_TARGET_CHANNEL, target.channel.name)
+                    putExtra(EXTRA_TARGET_LABEL, target.label)
+                }
+                PendingIntent.getService(
+                    this,
+                    1,
+                    serviceIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
             }
-            val unlockPendingIntent = PendingIntent.getService(
-                this,
-                1,
-                unlockIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
 
             val dismissIntent = Intent(this, UnlockForegroundService::class.java).apply {
                 action = ACTION_DISMISS_PROMPT
@@ -379,8 +450,8 @@ class UnlockForegroundService : Service() {
 
             val notification = NotificationCompat.Builder(this, CHANNEL_ALERTS)
                 .setSmallIcon(R.drawable.app_logo)
-                .setContentTitle("🔓 Laptop Detected (${target.channel.name})")
-                .setContentText("Target found on ${target.ip}:${target.port}. Unlock now?")
+                .setContentTitle("🔓 ${target.label} Detected (${target.channel.name})")
+                .setContentText("Laptop found on ${target.ip}:${target.port}. Unlock now?")
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setAutoCancel(true)
                 .setContentIntent(openAppIntent)
@@ -391,7 +462,7 @@ class UnlockForegroundService : Service() {
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.notify(NOTIFICATION_ID_PROMPT, notification)
         } catch (e: Exception) {
-            AppLogger.e(TAG, "Failed to show semi-auto prompt notification", e)
+            AppLogger.e(TAG, "Failed to show confirmation prompt notification", e)
         }
     }
 

@@ -7,7 +7,7 @@
 > initrd by the lab or installer). If you change anything here, you are
 > changing BOTH sides — update this file in the same commit.
 >
-> Verified: 2026-09-06 (contract verified by lab test_unlock.py suite, Android TOFU host key pinning, structured logging, adaptive mapper polling, and channel IP caching)
+> Verified: 2026-09-29 (contract verified by lab test_unlock.py suite, Android TOFU host key pinning, structured logging, adaptive mapper polling, channel IP caching, strict trusted host filtering, and mandatory unlock confirmation)
 
 ## TL;DR
 
@@ -34,6 +34,7 @@ is NOT success.
   (`ssh-ed25519 AAAA... comment`), NOT X.509/SPKI base64. On Android, full BouncyCastle provider
   is registered at slot 1 to support X25519 key exchange and Ed25519 signatures.
 - Host key pinning: TOFU (Trust On First Use) implemented with SHA-256 fingerprint verification and secure pinning in EncryptedSharedPreferences to prevent local MitM attacks on untrusted networks.
+- Strict Host Filtering: Network discovery only reports and interacts with hosts whose host key fingerprint matches a user-pinned trusted laptop key. Untrusted devices are ignored silently.
 
 ## Delivery step
 
@@ -74,6 +75,10 @@ None currently open against the unlock protocol contract. The previous deviation
 
 ## Security & Architecture Enhancements
 
+- **Granular Event-Driven Triggers:** Independent triggers for USB connection, phone hotspot state, Wi-Fi / local network, and phone screen unlock.
+- **Mandatory Unlock Confirmation:** Silent background password delivery is strictly prohibited. Background triggers present an interactive confirmation alert (`[Unlock Now]` / `[Dismiss]`). When biometric security is enabled, fingerprint confirmation is enforced for all unlock requests.
+- **Strict Trusted Host Verification:** Both `Scan` and `Scan and Unlock All` strictly require matching pinned host key fingerprints; random network devices or unauthorized SSH instances are completely ignored.
+- **Secure Non-Viewable Passphrase Vault:** LUKS passphrases are hardware-encrypted in Android KeyStore (AES-256-GCM) with screen capture prevention (`FLAG_SECURE`), non-viewable in UI (change/set only).
 - **Host Key Pinning (TOFU):** Protects against local MitM on public and shared networks by prompting the user for SHA-256 fingerprint verification on first connect and strictly enforcing the pinned key on subsequent unlocks.
 - **Structured Logging Subsystem:** 4-level logging (`DEBUG`, `INFO`, `WARN`, `ERROR`) with in-app filtering and one-click full export.
 - **Fast Multi-Channel Discovery & IP Caching:** Instant cache hit checks across USB (RNDIS/NCM), Wi-Fi Hotspot, and LAN interfaces, with dynamic CIDR subnet scanning.

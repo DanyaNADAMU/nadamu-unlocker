@@ -23,7 +23,8 @@ data class DiscoveredDevice(
     val banner: String,
     val interfaceName: String,
     val channel: NetworkChannel = NetworkChannel.LAN,
-    val fingerprint: String? = null
+    val fingerprint: String? = null,
+    val label: String = "Laptop"
 )
 
 class NetworkScanner {
@@ -117,58 +118,66 @@ class NetworkScanner {
     /**
      * Fast Discovery Mode:
      * 1. Probe cached IPs for enabled active channels first (<200-300ms).
-     * 2. Scans channels in priority order, filters by banner regex (skips non-Dropbear),
-     *    and if trusted keys exist, ensures the candidate matches the trusted laptop fingerprint.
+     * 2. Scans channels in priority order, filters by banner regex,
+     *    and verifies candidate matches pinned trusted fingerprint.
      */
     suspend fun fastDiscovery(
         hostKeyManager: HostKeyManager? = null,
         timeoutMs: Int = 300
     ): DiscoveredDevice? = withContext(Dispatchers.IO) {
-        val channelPriority = hostKeyManager?.getChannelPriority() ?: listOf(NetworkChannel.USB, NetworkChannel.HOTSPOT, NetworkChannel.LAN)
-        val targetPorts = hostKeyManager?.getTargetPorts() ?: listOf(22)
-        val bannerRegex = hostKeyManager?.getBannerRegex() ?: ".*dropbear.*"
+        if (hostKeyManager == null || !hostKeyManager.hasAnyTrustedKeys()) {
+            AppLogger.d(TAG, "Fast discovery: No trusted keys configured in HostKeyManager")
+            return@withContext null
+        }
+
+        val channelPriority = hostKeyManager.getChannelPriority()
+        val targetPorts = hostKeyManager.getTargetPorts()
+        val bannerRegex = hostKeyManager.getBannerRegex()
 
         val activeIfaces = getEligibleInterfaces().filter { iface ->
             val ch = classifyInterface(iface.name)
-            hostKeyManager?.isChannelEnabled(ch) ?: true
+            hostKeyManager.isChannelEnabled(ch)
         }
 
         if (activeIfaces.isEmpty()) {
             AppLogger.d(TAG, "Fast discovery: No active enabled interfaces detected")
-            if (hostKeyManager?.isChannelEnabled(NetworkChannel.HOTSPOT) != false) {
-                return@withContext probeCommonHotspotGateways(targetPorts, bannerRegex, timeoutMs)
+            if (hostKeyManager.isChannelEnabled(NetworkChannel.HOTSPOT)) {
+                val fallbackHit = probeCommonHotspotGateways(targetPorts, bannerRegex, timeoutMs)
+                if (fallbackHit != null) {
+                    val fp = fallbackHit.fingerprint ?: fetchHostKeyFingerprint(fallbackHit.ip, fallbackHit.port)
+                    if (fp != null && hostKeyManager.isFingerprintTrusted(fp)) {
+                        val label = hostKeyManager.getLabelForFingerprint(fp)
+                        return@withContext fallbackHit.copy(fingerprint = fp, label = label)
+                    }
+                }
             }
             return@withContext null
         }
 
         // 1. Check cached IPs for active enabled interface channels
-        if (hostKeyManager != null) {
-            val cachedTargets = mutableListOf<Pair<String, NetworkChannel>>()
-            for (iface in activeIfaces) {
-                val channel = classifyInterface(iface.name)
-                if (hostKeyManager.isChannelEnabled(channel)) {
-                    val cachedIp = hostKeyManager.getLastIp(channel)
-                    if (cachedIp != null) {
-                        cachedTargets.add(Pair(cachedIp, channel))
-                    }
+        val cachedTargets = mutableListOf<Pair<String, NetworkChannel>>()
+        for (iface in activeIfaces) {
+            val channel = classifyInterface(iface.name)
+            if (hostKeyManager.isChannelEnabled(channel)) {
+                val cachedIp = hostKeyManager.getLastIp(channel)
+                if (cachedIp != null) {
+                    cachedTargets.add(Pair(cachedIp, channel))
                 }
             }
+        }
 
-            if (cachedTargets.isNotEmpty()) {
-                AppLogger.d(TAG, "Probing cached channel IPs: ${cachedTargets.joinToString { "${it.second.name}:${it.first}" }}")
-                val probeDeferreds = cachedTargets.flatMap { (ip, channel) ->
-                    targetPorts.map { port ->
-                        async { probeHost(ip, channel.name, port, timeoutMs, channel, bannerRegex) }
-                    }
+        if (cachedTargets.isNotEmpty()) {
+            AppLogger.d(TAG, "Probing cached channel IPs: ${cachedTargets.joinToString { "${it.second.name}:${it.first}" }}")
+            val probeDeferreds = cachedTargets.flatMap { (ip, channel) ->
+                targetPorts.map { port ->
+                    async { probeHost(ip, channel.name, port, timeoutMs, channel, bannerRegex) }
                 }
-                val cachedHits = probeDeferreds.awaitAll().filterNotNull()
-                if (cachedHits.isNotEmpty()) {
-                    val target = if (cachedHits.size > 1 && hostKeyManager.hasAnyTrustedKeys()) {
-                        findTrustedDeviceCandidate(cachedHits, hostKeyManager) ?: cachedHits.first()
-                    } else {
-                        cachedHits.first()
-                    }
-                    AppLogger.i(TAG, "Fast discovery: Cache hit on ${target.ip}:${target.port} (${target.channel.name})")
+            }
+            val cachedHits = probeDeferreds.awaitAll().filterNotNull()
+            if (cachedHits.isNotEmpty()) {
+                val target = findTrustedDeviceCandidate(cachedHits, hostKeyManager)
+                if (target != null) {
+                    AppLogger.i(TAG, "Fast discovery: Cache hit on ${target.ip}:${target.port} (${target.label} - ${target.channel.name})")
                     return@withContext target
                 }
             }
@@ -182,43 +191,23 @@ class NetworkScanner {
         }
 
         for (iface in sortedIfaces) {
-            val found = scanSubnetForLuks(iface, maxHosts = 1024, timeoutMs = timeoutMs, hostKeyManager = hostKeyManager)
-            if (found.isNotEmpty()) {
-                // If user has trusted keys, only select the machine matching trusted fingerprint
-                val chosenDevice = if (hostKeyManager?.hasAnyTrustedKeys() == true) {
-                    val candidate = findTrustedDeviceCandidate(found, hostKeyManager)
-                    if (candidate != null) {
-                        candidate
-                    } else {
-                        AppLogger.d(TAG, "Found ${found.size} Dropbear device(s), but none matched trusted host fingerprint.")
-                        null
-                    }
-                } else {
-                    // First time setup: return first found Dropbear device
-                    found.first()
-                }
-
-                if (chosenDevice != null) {
-                    if (hostKeyManager != null) {
-                        hostKeyManager.setLastIp(chosenDevice.channel, chosenDevice.ip)
-                    }
-                    AppLogger.i(TAG, "Fast discovery: Found matching target on ${chosenDevice.ip}:${chosenDevice.port} (${chosenDevice.interfaceName})")
-                    return@withContext chosenDevice
-                }
+            val found = scanSubnetForLuks(targetInterface = iface, maxHosts = 1024, timeoutMs = timeoutMs, hostKeyManager = hostKeyManager)
+            val candidate = found.firstOrNull()
+            if (candidate != null) {
+                hostKeyManager.setLastIp(candidate.channel, candidate.ip)
+                AppLogger.i(TAG, "Fast discovery: Found matching target on ${candidate.ip}:${candidate.port} (${candidate.label} - ${candidate.interfaceName})")
+                return@withContext candidate
             }
         }
 
         // 3. Fallback hotspot gateways check
-        if (hostKeyManager?.isChannelEnabled(NetworkChannel.HOTSPOT) != false) {
+        if (hostKeyManager.isChannelEnabled(NetworkChannel.HOTSPOT)) {
             val fallbackHit = probeCommonHotspotGateways(targetPorts, bannerRegex, timeoutMs)
             if (fallbackHit != null) {
-                if (hostKeyManager?.hasAnyTrustedKeys() == true) {
-                    val fp = fallbackHit.fingerprint ?: fetchHostKeyFingerprint(fallbackHit.ip, fallbackHit.port)
-                    if (fp != null && hostKeyManager.isFingerprintTrusted(fp)) {
-                        return@withContext fallbackHit.copy(fingerprint = fp)
-                    }
-                } else {
-                    return@withContext fallbackHit
+                val fp = fallbackHit.fingerprint ?: fetchHostKeyFingerprint(fallbackHit.ip, fallbackHit.port)
+                if (fp != null && hostKeyManager.isFingerprintTrusted(fp)) {
+                    val label = hostKeyManager.getLabelForFingerprint(fp)
+                    return@withContext fallbackHit.copy(fingerprint = fp, label = label)
                 }
             }
         }
@@ -233,8 +222,10 @@ class NetworkScanner {
             async {
                 val fp = dev.fingerprint ?: fetchHostKeyFingerprint(dev.ip, dev.port)
                 if (fp != null && hostKeyManager.isFingerprintTrusted(fp)) {
-                    dev.copy(fingerprint = fp)
+                    val label = hostKeyManager.getLabelForFingerprint(fp)
+                    dev.copy(fingerprint = fp, label = label)
                 } else {
+                    AppLogger.d(TAG, "Ignoring candidate host on ${dev.ip}:${dev.port} (untrusted fingerprint)")
                     null
                 }
             }
@@ -284,22 +275,31 @@ class NetworkScanner {
 
     /**
      * Scan network prefixes concurrently for dropbear/SSH matching port and banner regex.
+     * Strictly verifies each device against HostKeyManager trusted keys.
      */
     suspend fun scanSubnetForLuks(
         targetInterface: NetworkInterface? = null,
+        targetChannels: Set<NetworkChannel>? = null,
         maxHosts: Int = 1024,
         timeoutMs: Int = 300,
         hostKeyManager: HostKeyManager? = null
     ): List<DiscoveredDevice> = withContext(Dispatchers.IO) {
-        val targetPorts = hostKeyManager?.getTargetPorts() ?: listOf(22)
-        val bannerRegex = hostKeyManager?.getBannerRegex() ?: ".*dropbear.*"
+        if (hostKeyManager == null || !hostKeyManager.hasAnyTrustedKeys()) {
+            AppLogger.d(TAG, "No trusted keys configured in HostKeyManager; skipping scan.")
+            return@withContext emptyList()
+        }
+
+        val targetPorts = hostKeyManager.getTargetPorts()
+        val bannerRegex = hostKeyManager.getBannerRegex()
 
         val interfaces = if (targetInterface != null) {
             listOf(targetInterface)
         } else {
             getEligibleInterfaces().filter { iface ->
                 val ch = classifyInterface(iface.name)
-                hostKeyManager?.isChannelEnabled(ch) ?: true
+                val matchesChannel = targetChannels == null || targetChannels.contains(ch)
+                val isEnabled = hostKeyManager.isChannelEnabled(ch)
+                matchesChannel && isEnabled
             }
         }
 
@@ -321,7 +321,9 @@ class NetworkScanner {
         }.toMutableList()
 
         if (allTasks.isEmpty() && targetInterface == null) {
-            if (hostKeyManager?.isChannelEnabled(NetworkChannel.HOTSPOT) != false) {
+            val shouldProbeHotspot = (targetChannels == null || targetChannels.contains(NetworkChannel.HOTSPOT)) &&
+                    hostKeyManager.isChannelEnabled(NetworkChannel.HOTSPOT)
+            if (shouldProbeHotspot) {
                 COMMON_HOTSPOT_SUBNETS.forEach { gatewayIp ->
                     try {
                         val addr = InetAddress.getByName(gatewayIp) as? Inet4Address
@@ -338,8 +340,24 @@ class NetworkScanner {
             }
         }
 
-        val results = allTasks.awaitAll().filterNotNull().distinctBy { "${it.ip}:${it.port}" }
-        results
+        val probedCandidates = allTasks.awaitAll().filterNotNull().distinctBy { "${it.ip}:${it.port}" }
+
+        // Filter: STRICTLY verify host key fingerprint and attach label. Untrusted are ignored.
+        val verifiedDevices = probedCandidates.map { candidate ->
+            async {
+                val fp = candidate.fingerprint ?: fetchHostKeyFingerprint(candidate.ip, candidate.port)
+                if (fp != null && hostKeyManager.isFingerprintTrusted(fp)) {
+                    val label = hostKeyManager.getLabelForFingerprint(fp)
+                    AppLogger.d(TAG, "Discovered trusted host: ${candidate.ip}:${candidate.port} ($label)")
+                    candidate.copy(fingerprint = fp, label = label)
+                } else {
+                    AppLogger.d(TAG, "Ignoring untrusted Dropbear host on ${candidate.ip}:${candidate.port} (fp=${fp ?: "none"})")
+                    null
+                }
+            }
+        }.awaitAll().filterNotNull()
+
+        verifiedDevices
     }
 
     /**

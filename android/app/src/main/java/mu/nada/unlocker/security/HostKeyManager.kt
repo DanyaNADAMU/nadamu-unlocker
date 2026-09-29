@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
-import mu.nada.unlocker.data.DiscoveryMode
 import mu.nada.unlocker.data.NetworkChannel
 import mu.nada.unlocker.log.AppLogger
 import org.json.JSONArray
@@ -20,10 +19,12 @@ class HostKeyManager(private val context: Context) {
         private const val PREFIX_CACHE_IP = "cache_ip_"
         private const val KEY_CHANNEL_PRIORITY = "channel_priority_order"
         private const val PREFIX_CHANNEL_ENABLED = "channel_enabled_"
-        private const val KEY_DISCOVERY_MODE = "discovery_mode"
+        private const val KEY_TRIGGER_USB = "trigger_event_usb"
+        private const val KEY_TRIGGER_HOTSPOT = "trigger_event_hotspot"
+        private const val KEY_TRIGGER_WIFI = "trigger_event_wifi"
+        private const val KEY_TRIGGER_SCREEN_UNLOCK = "trigger_event_screen_unlock"
         private const val KEY_MAPPER_TARGET = "mapper_target"
         private const val KEY_POLL_TIMEOUT = "poll_timeout_sec"
-        private const val KEY_AUTONOMY_MODE = "autonomy_mode"
         private const val KEY_TARGET_PORTS = "target_ports_csv"
         private const val KEY_BANNER_REGEX = "banner_regex_filter"
         private const val KEY_BIOMETRIC_UNLOCK = "biometric_unlock_required"
@@ -77,6 +78,11 @@ class HostKeyManager(private val context: Context) {
     fun isFingerprintTrusted(fingerprint: String): Boolean {
         val trimmed = fingerprint.trim()
         return getTrustedKeys().any { it.fingerprint.trim().equals(trimmed, ignoreCase = true) }
+    }
+
+    fun getLabelForFingerprint(fingerprint: String): String {
+        val trimmed = fingerprint.trim()
+        return getTrustedKeys().firstOrNull { it.fingerprint.trim().equals(trimmed, ignoreCase = true) }?.label ?: "Laptop"
     }
 
     fun trustFingerprint(fingerprint: String, label: String = "Laptop") {
@@ -146,20 +152,34 @@ class HostKeyManager(private val context: Context) {
         AppLogger.d(TAG, "Channel ${channel.name} enabled: $enabled")
     }
 
-    // --- Discovery Mode ---
+    // --- Trigger Settings ---
 
-    fun getDiscoveryMode(): DiscoveryMode {
-        val name = prefs.getString(KEY_DISCOVERY_MODE, DiscoveryMode.FAST.name)
-        return try {
-            DiscoveryMode.valueOf(name ?: DiscoveryMode.FAST.name)
-        } catch (_: Exception) {
-            DiscoveryMode.FAST
-        }
+    fun isTriggerUsbEnabled(): Boolean = prefs.getBoolean(KEY_TRIGGER_USB, true)
+    fun setTriggerUsbEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_TRIGGER_USB, enabled).apply()
+        AppLogger.d(TAG, "Trigger USB enabled: $enabled")
     }
 
-    fun setDiscoveryMode(mode: DiscoveryMode) {
-        prefs.edit().putString(KEY_DISCOVERY_MODE, mode.name).apply()
-        AppLogger.d(TAG, "Discovery mode set to: ${mode.name}")
+    fun isTriggerHotspotEnabled(): Boolean = prefs.getBoolean(KEY_TRIGGER_HOTSPOT, true)
+    fun setTriggerHotspotEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_TRIGGER_HOTSPOT, enabled).apply()
+        AppLogger.d(TAG, "Trigger Hotspot enabled: $enabled")
+    }
+
+    fun isTriggerWifiEnabled(): Boolean = prefs.getBoolean(KEY_TRIGGER_WIFI, true)
+    fun setTriggerWifiEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_TRIGGER_WIFI, enabled).apply()
+        AppLogger.d(TAG, "Trigger Wi-Fi/LAN enabled: $enabled")
+    }
+
+    fun isTriggerScreenUnlockEnabled(): Boolean = prefs.getBoolean(KEY_TRIGGER_SCREEN_UNLOCK, true)
+    fun setTriggerScreenUnlockEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_TRIGGER_SCREEN_UNLOCK, enabled).apply()
+        AppLogger.d(TAG, "Trigger Screen Unlock enabled: $enabled")
+    }
+
+    fun isAnyTriggerEnabled(): Boolean {
+        return isTriggerUsbEnabled() || isTriggerHotspotEnabled() || isTriggerWifiEnabled() || isTriggerScreenUnlockEnabled()
     }
 
     // --- IP Caching ---
@@ -180,22 +200,6 @@ class HostKeyManager(private val context: Context) {
         }
         editor.apply()
         AppLogger.d(TAG, "Cleared all cached IPs")
-    }
-
-    // --- Autonomy Mode ---
-
-    fun getAutonomyMode(): mu.nada.unlocker.data.AutonomyMode {
-        val name = prefs.getString(KEY_AUTONOMY_MODE, mu.nada.unlocker.data.AutonomyMode.MANUAL.name)
-        return try {
-            mu.nada.unlocker.data.AutonomyMode.valueOf(name ?: mu.nada.unlocker.data.AutonomyMode.MANUAL.name)
-        } catch (_: Exception) {
-            mu.nada.unlocker.data.AutonomyMode.MANUAL
-        }
-    }
-
-    fun setAutonomyMode(mode: mu.nada.unlocker.data.AutonomyMode) {
-        prefs.edit().putString(KEY_AUTONOMY_MODE, mode.name).apply()
-        AppLogger.i(TAG, "Autonomy mode set to: ${mode.name}")
     }
 
     // --- Target Ports & Banner Regex Filters ---
